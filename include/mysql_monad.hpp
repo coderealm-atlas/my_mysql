@@ -106,7 +106,7 @@ class MonadicMysqlSession {
 
     return IO<MysqlSessionState>([state_ptr, sql_copy, this](auto cb) {
       state_ptr->conn->async_execute(
-          sql_copy, state_ptr->result, state_ptr->diag,
+          sql_copy, state_ptr->results, state_ptr->diag,
           [cb = std::move(cb), state_ptr](mysql::error_code ec) mutable {
             state_ptr->error = ec;
             cb(std::move(*state_ptr));  // move the object back out

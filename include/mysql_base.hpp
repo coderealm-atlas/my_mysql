@@ -110,7 +110,7 @@ struct MysqlConfig {
 
 struct MysqlSessionState {
   boost::mysql::pooled_connection conn;
-  boost::mysql::results result;
+  boost::mysql::results results;
   boost::mysql::error_code error;
   boost::mysql::diagnostics diag;
   json::object updates;
@@ -120,7 +120,7 @@ struct MysqlSessionState {
   // Move constructor
   MysqlSessionState(MysqlSessionState&& other) noexcept
       : conn(std::move(other.conn)),
-        result(std::move(other.result)),
+        results(std::move(other.results)),
         error(std::move(other.error)),
         diag(std::move(other.diag)),
         updates(std::move(other.updates)) {}
@@ -128,7 +128,7 @@ struct MysqlSessionState {
   // Move assignment
   MysqlSessionState& operator=(MysqlSessionState&& other) noexcept {
     conn = std::move(other.conn);
-    result = std::move(other.result);
+    results = std::move(other.results);
     error = std::move(other.error);
     diag = std::move(other.diag);
     updates = std::move(other.updates);
