@@ -141,6 +141,7 @@ struct MysqlSessionState {
 
   bool has_error() const { return static_cast<bool>(error); }
   std::string error_message() const { return error.message(); }
+  std::string diagnostics() const { return diag.server_message(); }
 };
 
 inline mysql::pool_params params(const MysqlConfig& config) {
