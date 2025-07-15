@@ -15,6 +15,7 @@
 #include <boost/mysql.hpp>
 #include <boost/shared_ptr.hpp>
 
+#include "common_macros.hpp"
 #include "io_monad.hpp"
 #include "mysql_base.hpp"
 
@@ -30,47 +31,58 @@ namespace monad {
 using MysqlSessionState = sql::MysqlSessionState;
 using MysqlPoolWrapper = sql::MysqlPoolWrapper;
 
-class MonadicMysqlSession {
+class MonadicMysqlSession
+    : public std::enable_shared_from_this<MonadicMysqlSession> {
  public:
   using Factory = std::function<std::shared_ptr<MonadicMysqlSession>()>;
+  static inline std::atomic<int> instance_count{0};
   MonadicMysqlSession(MysqlPoolWrapper& pool)
       : pool_(pool),
         executor_(pool.get().get_executor()),
-        strand_(asio::make_strand(executor_)) {}
+        strand_(asio::make_strand(executor_)) {
+    ++instance_count;
+    DEBUG_PRINT(
+        "[MonadicMysqlSession +] instance_count = " << instance_count.load());
+  }
 
-  ~MonadicMysqlSession() {}
+  ~MonadicMysqlSession() {
+    --instance_count;
+    DEBUG_PRINT(
+        "[MonadicMysqlSession -] instance_count = " << instance_count.load());
+  }
 
   IO<MysqlSessionState> run_query(
       const std::string& sql,
       std::chrono::seconds timeout = std::chrono::seconds(5)) {
     return get_connection(timeout).then(
-        [this, sql](MysqlSessionState state) mutable {
+        [self = shared_from_this(), sql](MysqlSessionState state) mutable {
           if (state.has_error()) {
             return IO<MysqlSessionState>::pure(std::move(state));
           }
-          return execute_sql(std::move(state), sql);
+          return self->execute_sql(std::move(state), sql);
         });
   }
 
   IO<MysqlSessionState> run_query(
       std::function<std::string(mysql::pooled_connection&)> sql_generator,
       std::chrono::seconds timeout = std::chrono::seconds(5)) {
-    return get_connection(timeout).then([*this, sql_generator =
-                                                    std::move(sql_generator)](
-                                            MysqlSessionState state) mutable {
-      if (state.has_error()) {
-        return IO<MysqlSessionState>::fail(Error{1, state.error_message()});
-      }
-      std::string sql = sql_generator(state.conn);
-      if (sql.empty()) {
-        BOOST_LOG_SEV(lg, trivial::error)
-            << "Generated SQL is empty, cannot execute.";
-        return IO<MysqlSessionState>::fail(Error{4, "Generated SQL is empty"});
-      } else {
-        BOOST_LOG_SEV(lg, trivial::trace) << "Executing SQL: " << sql;
-      }
-      return execute_sql(std::move(state), sql);
-    });
+    return get_connection(timeout).then(
+        [self = shared_from_this(), sql_generator = std::move(sql_generator)](
+            MysqlSessionState state) mutable {
+          if (state.has_error()) {
+            return IO<MysqlSessionState>::fail(Error{1, state.error_message()});
+          }
+          std::string sql = sql_generator(state.conn);
+          if (sql.empty()) {
+            BOOST_LOG_SEV(self->lg, trivial::error)
+                << "Generated SQL is empty, cannot execute.";
+            return IO<MysqlSessionState>::fail(
+                Error{4, "Generated SQL is empty"});
+          } else {
+            BOOST_LOG_SEV(self->lg, trivial::trace) << "Executing SQL: " << sql;
+          }
+          return self->execute_sql(std::move(state), sql);
+        });
   }
 
  private:
@@ -80,38 +92,39 @@ class MonadicMysqlSession {
   logsrc::severity_logger<trivial::severity_level> lg;
 
   IO<MysqlSessionState> get_connection(std::chrono::seconds timeout) {
-    return IO<MysqlSessionState>([this, timeout](auto cb) {
-      pool_.get().async_get_connection(asio::cancel_after(
-          timeout,
-          asio::bind_executor(strand_, [this, cb = std::move(cb)](
-                                           boost::system::error_code ec,
-                                           mysql::pooled_connection conn) {
-            MysqlSessionState state;
-            if (ec) {
-              BOOST_LOG_SEV(this->lg, trivial::error)
-                  << "get_connection error: " << ec.message();
-              state.error = ec;
-            } else {
-              state.conn = std::move(conn);
-            }
-            cb(std::move(state));
-          })));
+    return IO<MysqlSessionState>([self = shared_from_this(),
+                                  timeout](IO<MysqlSessionState>::Callback cb) {
+      self->pool_.get().async_get_connection(asio::cancel_after(
+          timeout, asio::bind_executor(
+                       self->strand_, [self, cb = std::move(cb)](
+                                          boost::system::error_code ec,
+                                          mysql::pooled_connection conn) {
+                         MysqlSessionState state;
+                         if (ec) {
+                           BOOST_LOG_SEV(self->lg, trivial::error)
+                               << "get_connection error: " << ec.message();
+                           state.error = ec;
+                         } else {
+                           state.conn = std::move(conn);
+                         }
+                         cb(std::move(state));
+                       })));
     });
   }
 
   IO<MysqlSessionState> execute_sql(MysqlSessionState state,
                                     const std::string& sql) {
     auto state_ptr = std::make_shared<MysqlSessionState>(std::move(state));
-    auto sql_copy = std::string(sql);
 
-    return IO<MysqlSessionState>([state_ptr, sql_copy, this](auto cb) {
-      state_ptr->conn->async_execute(
-          sql_copy, state_ptr->results, state_ptr->diag,
-          [cb = std::move(cb), state_ptr](mysql::error_code ec) mutable {
-            state_ptr->error = ec;
-            cb(std::move(*state_ptr));  // move the object back out
-          });
-    });
+    return IO<MysqlSessionState>(
+        [state_ptr, sql, self = shared_from_this()](auto cb) {
+          state_ptr->conn->async_execute(
+              sql, state_ptr->results, state_ptr->diag,
+              [cb = std::move(cb), state_ptr](mysql::error_code ec) mutable {
+                state_ptr->error = ec;
+                cb(std::move(*state_ptr));  // move the object back out
+              });
+        });
   }
 };
 

@@ -18,6 +18,7 @@
 #include <filesystem>
 
 #include "base64.h"
+#include "common_macros.hpp"
 #include "mysql_base.hpp"
 
 namespace ssl = boost::asio::ssl;  // from <boost/asio/ssl.hpp>
@@ -193,9 +194,14 @@ struct MysqlPoolWrapper {
   MysqlPoolWrapper(asio::io_context& ioc, MysqlConfig& mysql_config)
       : pool_(ioc, params(mysql_config)) {
     pool_.async_run(asio::detached);
+    DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
   }
 
-  ~MysqlPoolWrapper() {}
+  ~MysqlPoolWrapper() { DEBUG_PRINT("[MysqlPoolWrapper] Destructor called."); }
+
+  void stop() {
+    pool_.cancel();  // ✅ cancel timers
+  }
 
   mysql::connection_pool& get() { return pool_; }
 
