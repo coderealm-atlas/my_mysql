@@ -45,8 +45,11 @@ TEST(UserServiceTest, create_user) {
                    {"email", "jianglibo@hotmail.com"},
                    {"password", "password123"},
                    {"roles", json::array{"user", "admin", "notallowed"}}};
+  auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
+
+  session->run_query("SELECT COUNT(*) FROM cjj365_users")
+      .run([session](auto r) { ASSERT_TRUE(r.is_ok()); });
   ioc.run();
-  notifier.waitForNotification();
 }
 
 // TEST(UserServiceTest, list_users) {

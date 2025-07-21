@@ -18,6 +18,7 @@
 #include "common_macros.hpp"
 #include "io_monad.hpp"
 #include "mysql_base.hpp"
+#include "result_monad.hpp"
 
 namespace asio = boost::asio;
 namespace logging = boost::log;
@@ -64,7 +65,8 @@ class MonadicMysqlSession
   }
 
   IO<MysqlSessionState> run_query(
-      std::function<std::string(mysql::pooled_connection&)> sql_generator,
+      std::function<MyResult<std::string>(mysql::pooled_connection&)>
+          sql_generator,
       std::chrono::seconds timeout = std::chrono::seconds(5)) {
     return get_connection(timeout).then(
         [self = shared_from_this(), sql_generator = std::move(sql_generator)](
@@ -72,16 +74,11 @@ class MonadicMysqlSession
           if (state.has_error()) {
             return IO<MysqlSessionState>::fail(Error{1, state.error_message()});
           }
-          std::string sql = sql_generator(state.conn);
-          if (sql.empty()) {
-            BOOST_LOG_SEV(self->lg, trivial::error)
-                << "Generated SQL is empty, cannot execute.";
-            return IO<MysqlSessionState>::fail(
-                Error{4, "Generated SQL is empty"});
-          } else {
-            BOOST_LOG_SEV(self->lg, trivial::trace) << "Executing SQL: " << sql;
+          auto sql = sql_generator(state.conn);
+          if (sql.is_err()) {
+            return IO<MysqlSessionState>::fail(std::move(sql.error()));
           }
-          return self->execute_sql(std::move(state), sql);
+          return self->execute_sql(std::move(state), sql.value());
         });
   }
 

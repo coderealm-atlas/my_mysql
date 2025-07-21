@@ -1,6 +1,5 @@
 #pragma once
 
-#include <bits/chrono.h>
 #include <stdint.h>
 
 #include <any>
@@ -23,6 +22,24 @@
 namespace fs = std::filesystem;
 
 namespace misc {
+
+class Blocker {
+  std::mutex m_;
+  std::condition_variable cv_;
+  bool stop_ = false;
+
+ public:
+  void wait() {
+    std::unique_lock lock(m_);
+    cv_.wait(lock, [&] { return stop_; });
+  }
+
+  void stop() {
+    std::lock_guard lock(m_);
+    stop_ = true;
+    cv_.notify_all();
+  }
+};
 
 using Clock = std::chrono::steady_clock;
 // Rate Limiter class
