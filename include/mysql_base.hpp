@@ -15,21 +15,15 @@
 #include <boost/mysql.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/url.hpp>  // IWYU pragma: keep
-#include <filesystem>
 
 #include "base64.h"
 #include "common_macros.hpp"
 #include "db_errors.hpp"
-#include "mysql_base.hpp"
 #include "result_monad.hpp"
 
 namespace ssl = boost::asio::ssl;  // from <boost/asio/ssl.hpp>
 namespace asio = boost::asio;
-namespace logging = boost::log;
-namespace trivial = logging::trivial;
-namespace logsrc = boost::log::sources;
 namespace json = boost::json;
-namespace fs = std::filesystem;
 namespace mysql = boost::mysql;
 using tcp = asio::ip::tcp;
 
@@ -41,6 +35,15 @@ inline monad::Error make_not_found_error(const std::string& message) {
 
 inline monad::Error make_nullid_error(const std::string& message) {
   return monad::Error{db_error::to_int(db_error::DbError::NullId), message};
+}
+
+inline monad::Error make_multiple_result_error(const std::string& message) {
+  return monad::Error{db_error::to_int(db_error::DbError::MultipleResult),
+                      message};
+}
+
+inline int get_error_code(const db_error::DbError& de) {
+  return db_error::to_int(de);
 }
 
 struct MysqlConfig {
