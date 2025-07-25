@@ -1,5 +1,5 @@
 {
-  "name": "http-client",
+  "name": "my-mysql",
   "version-string": "latest",
   "dependencies": [
     "benchmark",
@@ -21,7 +21,6 @@
         "ssl"
       ]
     },
-    "zstd",
-    "sqlite3"
+    "zstd"
   ]
 }

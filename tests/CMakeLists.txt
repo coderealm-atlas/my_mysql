@@ -19,12 +19,12 @@ find_package(Boost REQUIRED COMPONENTS iostreams)
 find_package(Boost REQUIRED COMPONENTS log)
 find_package(Boost REQUIRED COMPONENTS log_setup)
 find_package(date CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 
 # find_package(RocksDB CONFIG REQUIRED)
 find_package(date CONFIG REQUIRED)
-find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 

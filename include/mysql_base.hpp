@@ -19,7 +19,9 @@
 
 #include "base64.h"
 #include "common_macros.hpp"
+#include "db_errors.hpp"
 #include "mysql_base.hpp"
+#include "result_monad.hpp"
 
 namespace ssl = boost::asio::ssl;  // from <boost/asio/ssl.hpp>
 namespace asio = boost::asio;
@@ -32,6 +34,14 @@ namespace mysql = boost::mysql;
 using tcp = asio::ip::tcp;
 
 namespace sql {
+
+inline monad::Error make_not_found_error(const std::string& message) {
+  return monad::Error{db_error::to_int(db_error::DbError::NotFound), message};
+}
+
+inline monad::Error make_nullid_error(const std::string& message) {
+  return monad::Error{db_error::to_int(db_error::DbError::NullId), message};
+}
 
 struct MysqlConfig {
   std::string host;
