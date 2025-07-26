@@ -4,12 +4,13 @@
 #include <string>
 #include <ostream>
 
-namespace db_error {
+namespace db_errors {
 
 enum class DbError : int {
-  NotFound = 1000,
-  MultipleResult = 1001,
-  NullId = 1002,
+  NO_ROWS = 1000,
+  MULTIPLE_RESULTS = 1001,
+  NULL_ID = 1002,
+  INDEX_OUT_OF_BOUNDS = 1003,
 };
 
 inline int to_int(DbError e) { return static_cast<int>(e); }

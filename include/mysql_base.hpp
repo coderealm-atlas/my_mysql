@@ -13,6 +13,7 @@
 #include <boost/log/utility/setup/file.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/mysql.hpp>
+#include <boost/mysql/resultset_view.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/url.hpp>  // IWYU pragma: keep
 
@@ -28,23 +29,6 @@ namespace mysql = boost::mysql;
 using tcp = asio::ip::tcp;
 
 namespace sql {
-
-inline monad::Error make_not_found_error(const std::string& message) {
-  return monad::Error{db_error::to_int(db_error::DbError::NotFound), message};
-}
-
-inline monad::Error make_nullid_error(const std::string& message) {
-  return monad::Error{db_error::to_int(db_error::DbError::NullId), message};
-}
-
-inline monad::Error make_multiple_result_error(const std::string& message) {
-  return monad::Error{db_error::to_int(db_error::DbError::MultipleResult),
-                      message};
-}
-
-inline int get_error_code(const db_error::DbError& de) {
-  return db_error::to_int(de);
-}
 
 struct MysqlConfig {
   std::string host;
@@ -156,6 +140,41 @@ struct MysqlSessionState {
   bool has_error() const { return static_cast<bool>(error); }
   std::string error_message() const { return error.message(); }
   std::string diagnostics() const { return diag.server_message(); }
+
+  monad::MyResult<mysql::row_view> only_one_row(const std::string& message,
+                                                int result_index = 0) {
+    if (results.empty()) {
+      return monad::MyResult<mysql::row_view>::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::NO_ROWS), message});
+    }
+    if (result_index < 0 || result_index >= results.size()) {
+      return monad::MyResult<mysql::row_view>::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::INDEX_OUT_OF_BOUNDS), message});
+    }
+    return monad::MyResult<mysql::row_view>::Ok(
+        results[result_index].rows()[0]);
+  }
+
+  monad::MyResult<std::pair<mysql::resultset_view, uint64_t>> list_rows(
+      const std::string& message, int rows_result_index,
+      int total_result_index) {
+    if (results.empty()) {
+      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
+          monad::Error{db_errors::to_int(db_errors::DbError::NO_ROWS),
+                       message});
+    }
+    if (rows_result_index < 0 || rows_result_index >= results.size() ||
+        total_result_index < 0 || total_result_index >= results.size()) {
+      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
+          monad::Error{
+              db_errors::to_int(db_errors::DbError::INDEX_OUT_OF_BOUNDS),
+              message});
+    }
+    auto rows = results[rows_result_index];
+    uint64_t total = results[total_result_index].rows().at(0).at(0).as_int64();
+    return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Ok(
+        std::make_pair(std::move(rows), total));
+  }
 };
 
 inline mysql::pool_params params(const MysqlConfig& config) {
