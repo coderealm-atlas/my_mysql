@@ -144,16 +144,16 @@ struct MysqlSessionState {
   monad::MyResult<mysql::row_view> only_one_row(const std::string& message,
                                                 int result_index = 0) {
     if (has_error()) {
-      return monad::MyResult<mysql::row_view>::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::SQL_FAILED), diagnostics()});
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::SQL_FAILED, diagnostics()});
     }
     if (results.empty()) {
-      return monad::MyResult<mysql::row_view>::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::NO_ROWS), message});
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::NO_ROWS, message});
     }
     if (result_index < 0 || result_index >= results.size()) {
-      return monad::MyResult<mysql::row_view>::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::INDEX_OUT_OF_BOUNDS), message});
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::INDEX_OUT_OF_BOUNDS, message});
     }
     return monad::MyResult<mysql::row_view>::Ok(
         results[result_index].rows()[0]);
@@ -162,20 +162,20 @@ struct MysqlSessionState {
   monad::MyVoidResult affected_only_one_row(const std::string& message,
                                             int result_index = 0) {
     if (has_error()) {
-      return monad::MyVoidResult::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::SQL_FAILED), diagnostics()});
+      return monad::MyVoidResult::Err(
+          monad::Error{db_errors::SQL_FAILED, diagnostics()});
     }
     if (results.empty()) {
-      return monad::MyVoidResult::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::NO_ROWS), message});
+      return monad::MyVoidResult::Err(
+          monad::Error{db_errors::NO_ROWS, message});
     }
     if (result_index < 0 || result_index >= results.size()) {
-      return monad::MyVoidResult::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::INDEX_OUT_OF_BOUNDS), message});
+      return monad::MyVoidResult::Err(
+          monad::Error{db_errors::INDEX_OUT_OF_BOUNDS, message});
     }
     if (results[result_index].affected_rows() != 1) {
-      return monad::MyVoidResult::Err(monad::Error{
-          db_errors::to_int(db_errors::DbError::MULTIPLE_RESULTS), message});
+      return monad::MyVoidResult::Err(
+          monad::Error{db_errors::MULTIPLE_RESULTS, message});
     }
     return monad::MyVoidResult();
   }
@@ -185,20 +185,16 @@ struct MysqlSessionState {
       int total_result_index) {
     if (has_error()) {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
-          monad::Error{db_errors::to_int(db_errors::DbError::SQL_FAILED),
-                       diagnostics()});
+          monad::Error{db_errors::SQL_FAILED, diagnostics()});
     }
     if (results.empty()) {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
-          monad::Error{db_errors::to_int(db_errors::DbError::NO_ROWS),
-                       message});
+          monad::Error{db_errors::NO_ROWS, message});
     }
     if (rows_result_index < 0 || rows_result_index >= results.size() ||
         total_result_index < 0 || total_result_index >= results.size()) {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
-          monad::Error{
-              db_errors::to_int(db_errors::DbError::INDEX_OUT_OF_BOUNDS),
-              message});
+          monad::Error{db_errors::INDEX_OUT_OF_BOUNDS, message});
     }
     auto rows = results[rows_result_index];
     uint64_t total = results[total_result_index].rows().at(0).at(0).as_int64();
