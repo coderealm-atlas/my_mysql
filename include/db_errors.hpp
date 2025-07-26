@@ -1,18 +1,13 @@
-// Generated from error_codes.ini
+// Auto-generated from error_codes.ini
 #pragma once
-
-#include <string>
-#include <ostream>
 
 namespace db_errors {
 
-enum class DbError : int {
-  SQL_FAILED = 1000,
-  NO_ROWS = 1001,
-  MULTIPLE_RESULTS = 1002,
-  NULL_ID = 1003,
-  INDEX_OUT_OF_BOUNDS = 1004,
-};
+// DbError error codes
+constexpr int SQL_FAILED = 1000;
+constexpr int NO_ROWS = 1001;
+constexpr int MULTIPLE_RESULTS = 1002;
+constexpr int NULL_ID = 1003;
+constexpr int INDEX_OUT_OF_BOUNDS = 1004;
 
-inline int to_int(DbError e) { return static_cast<int>(e); }
-}  // namespace error
+}  // namespace db_errors
