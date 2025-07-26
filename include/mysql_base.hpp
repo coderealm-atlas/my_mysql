@@ -143,6 +143,10 @@ struct MysqlSessionState {
 
   monad::MyResult<mysql::row_view> only_one_row(const std::string& message,
                                                 int result_index = 0) {
+    if (has_error()) {
+      return monad::MyResult<mysql::row_view>::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::SQL_FAILED), diagnostics()});
+    }
     if (results.empty()) {
       return monad::MyResult<mysql::row_view>::Err(monad::Error{
           db_errors::to_int(db_errors::DbError::NO_ROWS), message});
@@ -155,9 +159,35 @@ struct MysqlSessionState {
         results[result_index].rows()[0]);
   }
 
+  monad::MyVoidResult affected_only_one_row(const std::string& message,
+                                            int result_index = 0) {
+    if (has_error()) {
+      return monad::MyVoidResult::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::SQL_FAILED), diagnostics()});
+    }
+    if (results.empty()) {
+      return monad::MyVoidResult::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::NO_ROWS), message});
+    }
+    if (result_index < 0 || result_index >= results.size()) {
+      return monad::MyVoidResult::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::INDEX_OUT_OF_BOUNDS), message});
+    }
+    if (results[result_index].affected_rows() != 1) {
+      return monad::MyVoidResult::Err(monad::Error{
+          db_errors::to_int(db_errors::DbError::MULTIPLE_RESULTS), message});
+    }
+    return monad::MyVoidResult();
+  }
+
   monad::MyResult<std::pair<mysql::resultset_view, uint64_t>> list_rows(
       const std::string& message, int rows_result_index,
       int total_result_index) {
+    if (has_error()) {
+      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
+          monad::Error{db_errors::to_int(db_errors::DbError::SQL_FAILED),
+                       diagnostics()});
+    }
     if (results.empty()) {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
           monad::Error{db_errors::to_int(db_errors::DbError::NO_ROWS),

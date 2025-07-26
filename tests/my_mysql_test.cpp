@@ -67,6 +67,15 @@ TEST(MonadMysqlTest, only_one_row) {
               return IO<MysqlSessionState>::pure(std::move(state));
             });
       })
+      .then([&](auto state) {
+        return session->run_query("DELETE FROM cjj365_users;");
+      })
+      .map([&](auto state) {
+        auto rr = state.affected_only_one_row("Expected one row with count",
+                                              0);  // row_view
+        EXPECT_TRUE(rr.is_ok());
+        return state;
+      })
       .run([&, session](auto r) {
         EXPECT_TRUE(r.is_ok());
         std::cerr << "Query result: " << r.value().results.size() << std::endl;
@@ -140,5 +149,31 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
         EXPECT_FALSE(r.is_err());
         ioc.stop();
       });
+  ioc.run();
+}
+
+TEST(MonadMysqlTest, sql_failed) {
+  misc::ThreadNotifier notifier;
+  using namespace monad;
+  int rc = std::system(
+      "dbmate --env-file db/.env_local drop && dbmate --env-file "
+      "db/.env_local up");
+  ASSERT_EQ(rc, 0) << "Failed to reset test database";
+  asio::io_context ioc{};
+  std::string after_replace_env = t::replace_all_env_vars(mysql_config_str, {});
+  std::cerr << "after_replace_env: " << after_replace_env << std::endl;
+  sql::MysqlConfig mc =
+      json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
+  sql::MysqlPoolWrapper mysql_pool(ioc, mc);
+
+  auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
+  session->run_query("SELECT x* FROM cjj365_users;").run([&, session](auto r) {
+    auto rr = r.value().only_one_row("Expected one row with count");
+    EXPECT_TRUE((rr.is_err()));
+    EXPECT_EQ(rr.error().code,
+              db_errors::to_int(db_errors::DbError::SQL_FAILED));
+    std::cerr << "Query error: " << rr.error().what << std::endl;
+    ioc.stop();
+  });
   ioc.run();
 }
