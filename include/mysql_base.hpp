@@ -147,8 +147,8 @@ struct MysqlSessionState {
   std::string error_message() const { return error.message(); }
   std::string diagnostics() const { return diag.server_message(); }
 
-  monad::MyResult<mysql::row_view> only_one_row(const std::string& message,
-                                                int result_index = 0) {
+  monad::MyResult<mysql::row_view> expect_one_row(const std::string& message,
+                                                  int result_index = 0) {
     if (has_error()) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
@@ -165,8 +165,8 @@ struct MysqlSessionState {
         results[result_index].rows()[0]);
   }
 
-  monad::MyVoidResult affected_only_one_row(const std::string& message,
-                                            int result_index = 0) {
+  monad::MyVoidResult expect_affected_one_row(const std::string& message,
+                                              int result_index = 0) {
     if (has_error()) {
       return monad::MyVoidResult::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
@@ -186,9 +186,9 @@ struct MysqlSessionState {
     return monad::MyVoidResult();
   }
 
-  monad::MyResult<std::pair<mysql::resultset_view, uint64_t>> list_rows(
-      const std::string& message, int rows_result_index,
-      int total_result_index) {
+  monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>
+  expect_list_of_rows(const std::string& message, int rows_result_index,
+                      int total_result_index) {
     if (has_error()) {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
