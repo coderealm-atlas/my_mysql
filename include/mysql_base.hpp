@@ -30,6 +30,12 @@ using tcp = asio::ip::tcp;
 
 namespace sql {
 
+inline uint64_t epoch_milliseconds(boost::mysql::field_view f) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             f.as_datetime().as_time_point().time_since_epoch())
+      .count();
+}
+
 struct MysqlConfig {
   std::string host;
   int port;
