@@ -3,11 +3,13 @@
 
 namespace db_errors {
 
-// DbError error codes
-constexpr int SQL_FAILED = 1000;
-constexpr int NO_ROWS = 1001;
-constexpr int MULTIPLE_RESULTS = 1002;
-constexpr int NULL_ID = 1003;
-constexpr int INDEX_OUT_OF_BOUNDS = 1004;
+namespace SQL_EXEC {  // SQL_EXEC errors
+
+constexpr int SQL_FAILED = 1000;  // SQL execution failed.
+constexpr int NO_ROWS = 1001;  // not found
+constexpr int MULTIPLE_RESULTS = 1002;  // multiple result.
+constexpr int NULL_ID = 1003;  // return object has null id.
+constexpr int INDEX_OUT_OF_BOUNDS = 1004;  // row index out of bounds.
+}  // namespace SQL_EXEC
 
 }  // namespace db_errors

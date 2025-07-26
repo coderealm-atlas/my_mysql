@@ -141,7 +141,8 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
         auto result =
             state.list_rows("Expected one row with count", 0, 2);  // row_view
         EXPECT_TRUE(result.is_err());
-        EXPECT_EQ(result.error().code, db_errors::INDEX_OUT_OF_BOUNDS);
+        EXPECT_EQ(result.error().code,
+                  db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS);
         return IO<MysqlSessionState>::pure(std::move(state));
       })
       .run([&, session](auto r) {
@@ -169,7 +170,7 @@ TEST(MonadMysqlTest, sql_failed) {
   session->run_query("SELECT x* FROM cjj365_users;").run([&, session](auto r) {
     auto rr = r.value().only_one_row("Expected one row with count");
     EXPECT_TRUE((rr.is_err()));
-    EXPECT_EQ(rr.error().code, db_errors::SQL_FAILED);
+    EXPECT_EQ(rr.error().code, db_errors::SQL_EXEC::SQL_FAILED);
     std::cerr << "Query error: " << rr.error().what << std::endl;
     ioc.stop();
   });
