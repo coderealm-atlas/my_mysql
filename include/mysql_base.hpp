@@ -36,7 +36,6 @@ inline uint64_t epoch_milliseconds(boost::mysql::field_view f) {
       .count();
 }
 
-
 struct MysqlConfig {
   std::string host;
   int port;
@@ -154,7 +153,7 @@ struct MysqlSessionState {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
-    if (results.empty()) {
+    if (results.empty() || results[0].rows().empty()) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
     }
