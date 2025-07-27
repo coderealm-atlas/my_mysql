@@ -154,19 +154,19 @@ struct MysqlSessionState {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
-    if (results.empty() || results[result_index].rows().empty()) {
-      return monad::MyResult<mysql::row_view>::Err(
-          monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
-    }
-    if (result_index < 0 || result_index >= results.size()) {
+    if (results.size() <= result_index) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
+    }
+    if (results[result_index].rows().empty()) {
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
     }
     if (results[result_index].rows().size() != 1) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::MULTIPLE_RESULTS, message});
     }
-    if (results[result_index].rows()[result_index].size() <= id_column_index) {
+    if (results[result_index].rows()[0].size() <= id_column_index) {
       std::string nm =
           std::format("{}, id column index {}", message, id_column_index);
       return monad::MyResult<mysql::row_view>::Err(
@@ -186,11 +186,7 @@ struct MysqlSessionState {
       return monad::MyVoidResult::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
-    if (results.empty()) {
-      return monad::MyVoidResult::Err(
-          monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
-    }
-    if (result_index < 0 || result_index >= results.size()) {
+    if (results.size() <= result_index) {
       return monad::MyVoidResult::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
     }
@@ -208,16 +204,17 @@ struct MysqlSessionState {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
-    if (results.empty()) {
-      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
-          monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
-    }
-    if (rows_result_index < 0 || rows_result_index >= results.size() ||
-        total_result_index < 0 || total_result_index >= results.size()) {
+    if (results.size() <= rows_result_index ||
+        results.size() <= total_result_index) {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
     }
     auto rows = results[rows_result_index];
+    if (results[total_result_index].rows().empty()) {
+      std::string nm = "missing total rows result in " + message;
+      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
+          monad::Error{db_errors::SQL_EXEC::NO_ROWS, nm});
+    }
     uint64_t total = results[total_result_index].rows().at(0).at(0).as_int64();
     return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Ok(
         std::make_pair(std::move(rows), total));
