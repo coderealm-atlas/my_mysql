@@ -148,7 +148,8 @@ struct MysqlSessionState {
   std::string diagnostics() const { return diag.server_message(); }
 
   monad::MyResult<mysql::row_view> expect_one_row(const std::string& message,
-                                                  int result_index = 0) {
+                                                  int result_index,
+                                                  int id_column_index) {
     if (has_error()) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
@@ -161,12 +162,26 @@ struct MysqlSessionState {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
     }
+    if (results[result_index].rows().size() != 1) {
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::SQL_EXEC::MULTIPLE_RESULTS, message});
+    }
+    if (results[result_index].rows()[result_index].size() <= id_column_index) {
+      std::string nm =
+          std::format("{}, id column index {}", message, id_column_index);
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, nm});
+    }
+    if (results[result_index].rows()[0].at(id_column_index).is_null()) {
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::SQL_EXEC::NULL_ID, message});
+    }
     return monad::MyResult<mysql::row_view>::Ok(
         results[result_index].rows()[0]);
   }
 
   monad::MyVoidResult expect_affected_one_row(const std::string& message,
-                                              int result_index = 0) {
+                                              int result_index) {
     if (has_error()) {
       return monad::MyVoidResult::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
