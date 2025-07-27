@@ -153,7 +153,7 @@ struct MysqlSessionState {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
-    if (results.empty() || results[0].rows().empty()) {
+    if (results.empty() || results[result_index].rows().empty()) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
     }
