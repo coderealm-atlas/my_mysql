@@ -16,6 +16,7 @@
 #include <boost/mysql/resultset_view.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/url.hpp>  // IWYU pragma: keep
+#include <cstdint>
 
 #include "base64.h"
 #include "common_macros.hpp"
@@ -195,6 +196,19 @@ struct MysqlSessionState {
           monad::Error{db_errors::SQL_EXEC::MULTIPLE_RESULTS, message});
     }
     return monad::MyVoidResult();
+  }
+
+  monad::MyResult<uint64_t> expect_affected_rows(const std::string& message,
+                                                 int result_index) {
+    if (has_error()) {
+      return monad::MyResult<uint64_t>::Err(
+          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+    }
+    if (results.size() <= result_index) {
+      return monad::MyResult<uint64_t>::Err(
+          monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
+    }
+    return monad::MyResult<uint64_t>::Ok(results[result_index].affected_rows());
   }
 
   monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>
