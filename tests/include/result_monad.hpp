@@ -11,6 +11,20 @@
 
 namespace monad {
 
+template <typename T>
+struct WithMessage {
+  T value;
+  std::string message;
+};
+
+// Specialization for void
+template <>
+struct WithMessage<void> {
+  std::string message;
+};
+
+using WithMessageVoid = WithMessage<void>;
+
 struct Error {
   int code;
   std::string what;
@@ -104,6 +118,11 @@ class Result {
                   "catch_then must return Result<T,F>");
     if (is_err()) return std::invoke(f, std::move(error()));
     return Ret::Ok(std::move(value()));
+  }
+
+  std::optional<T> as_optional() const {
+    if (is_ok()) return value();
+    return std::nullopt;
   }
 
   // Return the value if ok, otherwise return the provided default
