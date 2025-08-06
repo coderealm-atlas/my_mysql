@@ -223,7 +223,13 @@ struct MysqlSessionState {
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
     }
-    auto rows = results[rows_result_index];
+    auto rows_resultset = results[rows_result_index];
+    if (rows_result_index == total_result_index) {
+      // If both results are the same, we can return directly
+      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Ok(
+          std::make_pair(std::move(rows_resultset),
+                         rows_resultset.rows().size()));
+    }
     if (results[total_result_index].rows().empty()) {
       std::string nm = "missing total rows result in " + message;
       return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
@@ -231,7 +237,12 @@ struct MysqlSessionState {
     }
     uint64_t total = results[total_result_index].rows().at(0).at(0).as_int64();
     return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Ok(
-        std::make_pair(std::move(rows), total));
+        std::make_pair(std::move(rows_resultset), total));
+  }
+
+  monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>
+  expect_all_list_of_rows(const std::string& message, int rows_result_index) {
+    return expect_list_of_rows(message, rows_result_index, rows_result_index);
   }
 };
 
