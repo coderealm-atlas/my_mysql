@@ -1,6 +1,8 @@
 // result.hpp
 #pragma once
 
+#include <boost/json.hpp>
+#include <format>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -8,6 +10,8 @@
 #include <string>
 #include <type_traits>
 #include <variant>
+
+namespace json = boost::json;
 
 namespace monad {
 
@@ -28,7 +32,50 @@ using WithMessageVoid = WithMessage<void>;
 struct Error {
   int code;
   std::string what;
+  int status = 500;  // Default HTTP status code
+  std::string content_type = "application/json";
+  std::optional<json::value> alternative_body = std::nullopt;
+
+  friend void tag_invoke(const json::value_from_tag&, json::value& jv,
+                         const Error& e) {
+    json::object jo;
+    jo["code"] = e.code;
+    jo["what"] = e.what;
+    jv = std::move(jo);
+  }
 };
+
+struct ErrorResponse {
+  Error error;
+  friend void tag_invoke(const json::value_from_tag&, json::value& jv,
+                         const ErrorResponse& resp) {
+    json::object jo;
+    jo["error"] = json::value_from(resp.error);
+    jv = std::move(jo);
+  }
+};
+
+inline std::string error_to_string(const Error& e) {
+  if (e.content_type == "application/json") {
+    return json::serialize(json::value_from(e));
+  } else {
+    return std::format("code: {}\nwhat: {}", e.code, e.what);
+  }
+}
+
+inline std::string error_to_response(const Error& e) {
+  if (e.alternative_body
+          .has_value()) {  // alternaive should construct full reponse.
+    return json::serialize(e.alternative_body.value());
+  } else {
+    if (e.content_type == "application/json") {
+      ErrorResponse resp{e};
+      return json::serialize(json::value_from(resp));
+    } else {
+      return std::format("code: {}\nwhat: {}", e.code, e.what);
+    }
+  }
+}
 
 inline std::ostream& operator<<(std::ostream& os, const Error& e) {
   return os << "[Error " << e.code << "] " << e.what;

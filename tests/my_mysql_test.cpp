@@ -138,8 +138,9 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
       ->run_query(
           "SELECT * FROM cjj365_users;SELECT COUNT(*) FROM cjj365_users;")
       .then([&](auto state) {
-        auto result = state.expect_list_of_rows("Expected one row with count",
-                                                0, 2);  // 2 is out of index. row_view
+        auto result =
+            state.expect_list_of_rows("Expected one row with count", 0,
+                                      2);  // 2 is out of index. row_view
         EXPECT_TRUE(result.is_err());
         EXPECT_EQ(result.error().code,
                   db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS);
@@ -175,4 +176,33 @@ TEST(MonadMysqlTest, sql_failed) {
     ioc.stop();
   });
   ioc.run();
+}
+
+struct MockMysqlConfigProvider : public sql::IMysqlConfigProvider {
+  MockMysqlConfigProvider(const sql::MysqlConfig& config) : config_(config) {}
+
+  const sql::MysqlConfig& get() const override { return config_; }
+
+ private:
+  sql::MysqlConfig config_;
+};
+
+TEST(MonadMysqlTest, configProvider) {
+  sql::MysqlConfig config;
+  config.host = "localhost";
+  config.port = 3306;
+  config.username = "user";
+  config.password = "password";
+  config.database = "test_db";
+  config.thread_safe = true;
+
+  MockMysqlConfigProvider config_provider(config);
+  const sql::MysqlConfig& retrieved_config = config_provider.get();
+
+  EXPECT_EQ(retrieved_config.host, config.host);
+  EXPECT_EQ(retrieved_config.port, config.port);
+  EXPECT_EQ(retrieved_config.username, config.username);
+  EXPECT_EQ(retrieved_config.password, config.password);
+  EXPECT_EQ(retrieved_config.database, config.database);
+  EXPECT_EQ(retrieved_config.thread_safe, config.thread_safe);
 }

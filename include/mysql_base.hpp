@@ -113,6 +113,12 @@ struct MysqlConfig {
   }
 };
 
+class IMysqlConfigProvider {
+ public:
+  virtual ~IMysqlConfigProvider() = default;
+  virtual const MysqlConfig& get() const = 0;
+};
+
 struct MysqlSessionState {
   boost::mysql::pooled_connection conn;
   boost::mysql::results results;
