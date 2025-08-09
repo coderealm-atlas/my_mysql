@@ -298,8 +298,9 @@ inline mysql::pool_params params(const MysqlConfig& config) {
 }
 
 struct MysqlPoolWrapper {
-  MysqlPoolWrapper(asio::io_context& ioc, MysqlConfig& mysql_config)
-      : pool_(ioc, params(mysql_config)) {
+  MysqlPoolWrapper(asio::io_context& ioc,
+                   IMysqlConfigProvider& mysql_config_provider)
+      : pool_(ioc, params(mysql_config_provider.get())) {
     pool_.async_run(asio::detached);
     DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
   }

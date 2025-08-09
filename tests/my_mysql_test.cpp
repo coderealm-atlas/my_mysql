@@ -8,6 +8,15 @@
 #include "mysql_monad.hpp"
 #include "tutil.hpp"  // IWYU pragma: keep
 
+struct MockMysqlConfigProvider : public sql::IMysqlConfigProvider {
+  MockMysqlConfigProvider(const sql::MysqlConfig& config) : config_(config) {}
+
+  const sql::MysqlConfig& get() const override { return config_; }
+
+ private:
+  sql::MysqlConfig config_;
+};
+
 static std::string mysql_config_str = R"""(
    {
     "host": "home-t630.cjj365.cc",
@@ -39,7 +48,8 @@ TEST(MonadMysqlTest, only_one_row) {
   std::cerr << "after_replace_env: " << after_replace_env << std::endl;
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
-  sql::MysqlPoolWrapper mysql_pool(ioc, mc);
+  MockMysqlConfigProvider config_provider(mc);
+  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
 
@@ -96,7 +106,8 @@ TEST(MonadMysqlTest, list_row_ok) {
   std::cerr << "after_replace_env: " << after_replace_env << std::endl;
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
-  sql::MysqlPoolWrapper mysql_pool(ioc, mc);
+  MockMysqlConfigProvider config_provider(mc);
+  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
   session
@@ -131,7 +142,8 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
   std::cerr << "after_replace_env: " << after_replace_env << std::endl;
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
-  sql::MysqlPoolWrapper mysql_pool(ioc, mc);
+  MockMysqlConfigProvider config_provider(mc);
+  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
   session
@@ -165,7 +177,8 @@ TEST(MonadMysqlTest, sql_failed) {
   std::cerr << "after_replace_env: " << after_replace_env << std::endl;
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
-  sql::MysqlPoolWrapper mysql_pool(ioc, mc);
+  MockMysqlConfigProvider config_provider(mc);
+  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
   session->run_query("SELECT x* FROM cjj365_users;").run([&, session](auto r) {
@@ -177,15 +190,6 @@ TEST(MonadMysqlTest, sql_failed) {
   });
   ioc.run();
 }
-
-struct MockMysqlConfigProvider : public sql::IMysqlConfigProvider {
-  MockMysqlConfigProvider(const sql::MysqlConfig& config) : config_(config) {}
-
-  const sql::MysqlConfig& get() const override { return config_; }
-
- private:
-  sql::MysqlConfig config_;
-};
 
 TEST(MonadMysqlTest, configProvider) {
   sql::MysqlConfig config;
