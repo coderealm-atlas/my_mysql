@@ -3,6 +3,7 @@
 #include <boost/asio/io_context.hpp>
 #include <variant>
 
+#include "ioc_provider.hpp"
 #include "misc_util.hpp"
 #include "mysql_base.hpp"
 #include "mysql_monad.hpp"
@@ -49,7 +50,8 @@ TEST(MonadMysqlTest, only_one_row) {
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
   MockMysqlConfigProvider config_provider(mc);
-  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
+  ioc::DummyIocProvider ioc_provider;
+  sql::MysqlPoolWrapper mysql_pool(ioc_provider, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
 
@@ -107,7 +109,9 @@ TEST(MonadMysqlTest, list_row_ok) {
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
   MockMysqlConfigProvider config_provider(mc);
-  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
+
+  ioc::DummyIocProvider ioc_provider;
+  sql::MysqlPoolWrapper mysql_pool(ioc_provider, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
   session
@@ -143,7 +147,8 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
   MockMysqlConfigProvider config_provider(mc);
-  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
+  ioc::DummyIocProvider ioc_provider;
+  sql::MysqlPoolWrapper mysql_pool(ioc_provider, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
   session
@@ -178,7 +183,8 @@ TEST(MonadMysqlTest, sql_failed) {
   sql::MysqlConfig mc =
       json::value_to<sql::MysqlConfig>(json::parse(after_replace_env));
   MockMysqlConfigProvider config_provider(mc);
-  sql::MysqlPoolWrapper mysql_pool(ioc, config_provider);
+  ioc::DummyIocProvider ioc_provider;
+  sql::MysqlPoolWrapper mysql_pool(ioc_provider, config_provider);
 
   auto session = std::make_shared<monad::MonadicMysqlSession>(mysql_pool);
   session->run_query("SELECT x* FROM cjj365_users;").run([&, session](auto r) {
