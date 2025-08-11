@@ -1,6 +1,7 @@
 #pragma once
 
-#include <boost/asio.hpp>      // IWYU pragma: keep
+#include <boost/asio.hpp>  // IWYU pragma: keep
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl.hpp>  // IWYU pragma: keep
 #include <boost/json.hpp>      // IWYU pragma: keep
 #include <boost/log/core.hpp>
@@ -21,7 +22,6 @@
 #include "base64.h"
 #include "common_macros.hpp"
 #include "db_errors.hpp"
-#include "ioc_provider.hpp"
 #include "result_monad.hpp"
 
 namespace ssl = boost::asio::ssl;  // from <boost/asio/ssl.hpp>
@@ -299,9 +299,9 @@ inline mysql::pool_params params(const MysqlConfig& config) {
 }
 
 struct MysqlPoolWrapper {
-  MysqlPoolWrapper(ioc::IIocProvider& ioc_provider,
+  MysqlPoolWrapper(asio::io_context& ioc,
                    IMysqlConfigProvider& mysql_config_provider)
-      : pool_(ioc_provider.get(), params(mysql_config_provider.get())) {
+      : pool_(ioc, params(mysql_config_provider.get())) {
     pool_.async_run(asio::detached);
     DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
   }
