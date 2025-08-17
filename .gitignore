@@ -55,3 +55,6 @@ test-results/
 FullCapture.bin
 .cache/*
 .clangd
+# all files under config_dir, except the files ends with .tpl
+config_dir/*
+!config_dir/*.tpl

@@ -2,7 +2,6 @@
 # unit tests:
 #
 
-# add_definitions(-DTEST_ENV)
 add_compile_definitions(TEST_ENV)
 add_compile_definitions(TEST_BUILD)
 add_compile_definitions(TEST_BUILD_GTEST)
@@ -23,7 +22,6 @@ find_package(OpenSSL REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 
-# find_package(RocksDB CONFIG REQUIRED)
 find_package(date CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(GTest CONFIG REQUIRED)
@@ -31,7 +29,6 @@ find_package(GTest CONFIG REQUIRED)
 add_compile_definitions(SERVER_GIT_AGENT="git/2.34.1")
 add_compile_definitions(MAX_CHUNK_LENGTH_BYTES=8)
 add_compile_definitions(RYML_DEFAULT_CALLBACK_USES_EXCEPTIONS=1)
-# add_compile_definitions(-DRYML_DEFAULT_CALLBACKS=0)
 
 
 
@@ -47,13 +44,13 @@ add_executable(${T_NAME}
     my_mysql_test.cpp
     ${LIB_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/base64.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/json_util.cpp
 )
 target_include_directories(${T_NAME}
     PUBLIC ${CMAKE_SOURCE_DIR}/include
     PRIVATE ./include
 )
 
-# target_precompile_headers(${T_NAME} PRIVATE ./include/pch.hpp)
 target_link_libraries(
     ${T_NAME}
     PRIVATE GTest::gtest GTest::gtest_main GTest::gmock GTest::gmock_main
