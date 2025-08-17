@@ -298,23 +298,69 @@ inline mysql::pool_params params(const MysqlConfig& config) {
   return params;
 }
 
+// struct MysqlPoolWrapper {
+//   MysqlPoolWrapper(asio::io_context& ioc,
+//                    IMysqlConfigProvider& mysql_config_provider)
+//       : pool_(ioc, params(mysql_config_provider.get())) {
+//     pool_.async_run(asio::detached);
+//     DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
+//   }
+
+//   ~MysqlPoolWrapper() { DEBUG_PRINT("[MysqlPoolWrapper] Destructor called.");
+//   }
+
+//   void stop() {
+//     pool_.cancel();  // ✅ cancel timers
+//   }
+
+//   mysql::connection_pool& get() { return pool_; }
+
+//  private:
+//   mysql::connection_pool pool_;
+// };
+
 struct MysqlPoolWrapper {
   MysqlPoolWrapper(asio::io_context& ioc,
                    IMysqlConfigProvider& mysql_config_provider)
       : pool_(ioc, params(mysql_config_provider.get())) {
-    pool_.async_run(asio::detached);
+    // Attach an error-reporting completion handler instead of asio::detached so
+    // we don't silently swallow errors.
+    pool_.async_run([this](const boost::system::error_code& ec) {
+      if (ec) {
+        DEBUG_PRINT("[MysqlPoolWrapper] async_run error: " << ec.message());
+      } else {
+        DEBUG_PRINT("[MysqlPoolWrapper] async_run exited cleanly.");
+      }
+    });
     DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
   }
 
-  ~MysqlPoolWrapper() { DEBUG_PRINT("[MysqlPoolWrapper] Destructor called."); }
+  // Non-copyable / non-movable to avoid multiple owners referencing the same
+  // pool lifecycle implicitly.
+  MysqlPoolWrapper(const MysqlPoolWrapper&) = delete;
+  MysqlPoolWrapper& operator=(const MysqlPoolWrapper&) = delete;
+  MysqlPoolWrapper(MysqlPoolWrapper&&) = delete;
+  MysqlPoolWrapper& operator=(MysqlPoolWrapper&&) = delete;
 
-  void stop() {
-    pool_.cancel();  // ✅ cancel timers
+  ~MysqlPoolWrapper() {
+    stop();
+    DEBUG_PRINT("[MysqlPoolWrapper] Destructor called.");
+  }
+
+  void stop() noexcept {
+    if (!stopped_) {
+      stopped_ = true;
+      pool_.cancel();  // cancel timers / outstanding waits; connections return
+                       // as they finish.
+      DEBUG_PRINT("[MysqlPoolWrapper] stop() invoked.");
+    }
   }
 
   mysql::connection_pool& get() { return pool_; }
+  const mysql::connection_pool& get() const { return pool_; }
 
  private:
   mysql::connection_pool pool_;
+  bool stopped_{false};
 };
 }  // namespace sql
