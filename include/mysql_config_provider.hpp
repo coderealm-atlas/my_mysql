@@ -2,13 +2,14 @@
 
 #include <boost/json.hpp>
 
-#include "i_output.hpp"
 #include "json_util.hpp"
 #include "log_stream.hpp"
 #include "simple_data.hpp"
 
 namespace json = boost::json;
 namespace sql {
+
+enum class MysqlSwitch { Off, On };
 
 struct MysqlConfig {
   std::string host;
@@ -108,7 +109,6 @@ class MysqlConfigProviderFile : public IMysqlConfigProvider {
     }
     json::value jv = r.value();
     jsonutil::substitue_envs(jv, app_properties.properties);
-    output_.debug() << "Loaded MySQL config: " << jv << std::endl;
     config_ = json::value_to<MysqlConfig>(std::move(jv));
   }
 
