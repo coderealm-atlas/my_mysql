@@ -75,6 +75,14 @@ struct MysqlSessionState {
   std::string error_message() const { return error.message(); }
   std::string diagnostics() const { return diag.server_message(); }
 
+  monad::MyVoidResult expect_no_error(const std::string& message) {
+    if (has_error()) {
+      return monad::MyVoidResult::Err(
+          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+    }
+    return monad::MyVoidResult();
+  }
+
   monad::MyResult<mysql::row_view> expect_one_row(const std::string& message,
                                                   int result_index,
                                                   int id_column_index) {
