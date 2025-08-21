@@ -17,6 +17,7 @@
 
 #include "common_macros.hpp"
 #include "io_monad.hpp"
+#include "log_stream.hpp"
 #include "mysql_base.hpp"
 #include "result_monad.hpp"
 
@@ -34,13 +35,20 @@ using MysqlPoolWrapper = sql::MysqlPoolWrapper;
 
 class MonadicMysqlSession
     : public std::enable_shared_from_this<MonadicMysqlSession> {
+  MysqlPoolWrapper& pool_;
+  asio::any_io_executor executor_;
+  asio::strand<asio::any_io_executor> strand_;
+  logsrc::severity_logger<trivial::severity_level> lg;
+  customio::IOutput& output_;
+
  public:
   using Factory = std::function<std::shared_ptr<MonadicMysqlSession>()>;
   static inline std::atomic<int> instance_count{0};
-  MonadicMysqlSession(MysqlPoolWrapper& pool)
+  MonadicMysqlSession(MysqlPoolWrapper& pool, customio::IOutput& output)
       : pool_(pool),
         executor_(pool.get().get_executor()),
-        strand_(asio::make_strand(executor_)) {
+        strand_(asio::make_strand(executor_)),
+        output_(output) {
     ++instance_count;
     DEBUG_PRINT(
         "[MonadicMysqlSession +] instance_count = " << instance_count.load());
@@ -78,16 +86,13 @@ class MonadicMysqlSession
           if (sql.is_err()) {
             return IO<MysqlSessionState>::fail(std::move(sql.error()));
           }
+          self->output_.trace()
+              << "Generated SQL: " << sql.value() << std::endl;
           return self->execute_sql(std::move(state), sql.value());
         });
   }
 
  private:
-  MysqlPoolWrapper& pool_;
-  asio::any_io_executor executor_;
-  asio::strand<asio::any_io_executor> strand_;
-  logsrc::severity_logger<trivial::severity_level> lg;
-
   IO<MysqlSessionState> get_connection(std::chrono::seconds timeout) {
     return IO<MysqlSessionState>([self = shared_from_this(),
                                   timeout](IO<MysqlSessionState>::Callback cb) {
@@ -98,7 +103,7 @@ class MonadicMysqlSession
                                           mysql::pooled_connection conn) {
                          MysqlSessionState state;
                          if (ec) {
-                           BOOST_LOG_SEV(self->lg, trivial::error)
+                           self->output_.error()
                                << "get_connection error: " << ec.message();
                            state.error = ec;
                          } else {
