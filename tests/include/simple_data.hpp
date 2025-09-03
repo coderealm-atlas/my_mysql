@@ -1,5 +1,10 @@
 #pragma once
+#include <sys/types.h>
+
+#include <atomic>
+#include <boost/json/conversion.hpp>
 #include <boost/system/detail/error_code.hpp>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -9,6 +14,7 @@
 #include <ostream>
 #include <vector>
 
+#include "common_macros.hpp"
 #include "result_monad.hpp"
 
 namespace fs = std::filesystem;
@@ -20,8 +26,33 @@ constexpr size_t TEN_M = static_cast<size_t>(10) * 1024 * 1024;         // 10MB
 
 static inline auto HELP_COLUMN_WIDTH = [] {};
 
+struct LoggingConfig {
+  std::string level;
+  std::string log_dir;
+  std::string log_file;
+  uint64_t rotation_size;
+  friend LoggingConfig tag_invoke(const json::value_to_tag<LoggingConfig>&,
+                                  const json::value& jv) {
+    std::vector<std::string> all_field_names = {"level", "log_dir", "log_file",
+                                                "rotation_size"};
+    for (const auto& field_name : all_field_names) {
+      if (!jv.as_object().contains(field_name)) {
+        throw std::runtime_error(field_name +
+                                 " not found in json LoggingConfig");
+      }
+    }
+    LoggingConfig lc;
+    lc.level = json::value_to<std::string>(jv.at("level"));
+    lc.log_dir = json::value_to<std::string>(jv.at("log_dir"));
+    lc.log_file = json::value_to<std::string>(jv.at("log_file"));
+    lc.rotation_size = jv.at("rotation_size").to_number<uint64_t>();
+    return lc;
+  }
+};
+
 struct ConfigSources {
-  std::vector<fs::path> paths;
+  inline static std::atomic<int> instance_count{0};
+  std::vector<fs::path> paths_;
   std::vector<std::string> profiles;
   // application_json is the final fallback of configuration.
   // appplication.json is read first, then application.{profile}.json,
@@ -30,8 +61,20 @@ struct ConfigSources {
   std::optional<json::value> application_json;
 
   ConfigSources(std::vector<fs::path> paths, std::vector<std::string> profiles)
-      : paths(std::move(paths)), profiles(std::move(profiles)) {
+      : paths_(std::move(paths)), profiles(std::move(profiles)) {
     // helper: deep merge two json values (objects only)
+    DEBUG_PRINT("initialize ConfigSources with paths_: "
+                << paths_.size() << ", profiles: " << profiles.size());
+    instance_count++;
+    if (instance_count > 1) {
+      throw std::runtime_error(
+          "ConfigSources should only be instantiated once.");
+    }
+    if (paths_.empty()) {
+      throw std::runtime_error(
+          "ConfigSources paths_ cannot be empty, forget to bind the "
+          "ConfigSources in DI?");
+    }
     auto deep_merge = [](json::value& dst, const json::value& src,
                          const auto& self_ref) -> void {
       if (!dst.is_object() || !src.is_object()) return;
@@ -55,7 +98,7 @@ struct ConfigSources {
     };
     // try to load application.json
     std::vector<fs::path> ordered_app_json_paths;
-    for (const auto& path : this->paths) {
+    for (const auto& path : this->paths_) {
       // add application.json if exists
       fs::path app_json_path = path / "application.json";
       if (fs::exists(app_json_path)) {
@@ -104,7 +147,8 @@ struct ConfigSources {
   monad::MyResult<json::value> json_content(const std::string& filename) const {
     // std::string content;
     std::vector<fs::path> ordered_paths;
-    for (const auto& path : paths) {
+    for (const auto& path : paths_) {
+      DEBUG_PRINT("checking: " << path / (filename + ".json"));
       // check for {filename}.json
       if (fs::exists(path / (filename + ".json"))) {
         ordered_paths.push_back(path / (filename + ".json"));
@@ -112,6 +156,7 @@ struct ConfigSources {
       // check for {filename}.{profile}.json
       for (const auto& profile : profiles) {
         fs::path full_path = path / (filename + "." + profile + ".json");
+        DEBUG_PRINT("checking: " << full_path);
         if (fs::exists(full_path)) {
           ordered_paths.push_back(full_path);
         }
@@ -171,8 +216,27 @@ struct ConfigSources {
     if (merged_json.is_object() && !merged_json.as_object().empty()) {
       return monad::MyResult<json::value>::Ok(merged_json);
     }
-    return monad::MyResult<json::value>::Err(monad::Error{
-        5019, std::format("Failed to find JSON file: {}", filename)});
+    std::ostringstream oss;
+    for (auto& path : paths_) {
+      oss << "Failed to find JSON file in: " << fs::absolute(path) << std::endl;
+    }
+    return monad::MyResult<json::value>::Err(
+        monad::Error{5019, std::format("Failed to find JSON file: {}, in: {}",
+                                       filename, oss.str())});
+  }
+
+  monad::MyResult<cjj365::LoggingConfig> logging_config() const {
+    return json_content("log_config")
+        .and_then([](const json::value& jv)
+                      -> monad::MyResult<cjj365::LoggingConfig> {
+          try {
+            return monad::MyResult<cjj365::LoggingConfig>::Ok(
+                json::value_to<cjj365::LoggingConfig>(jv));
+          } catch (const std::exception& e) {
+            return monad::MyResult<cjj365::LoggingConfig>::Err(
+                monad::Error{5019, e.what()});
+          }
+        });
   }
 };
 
@@ -214,6 +278,72 @@ inline EnvParseResult parse_envrc(const fs::path& envrc) {
 }
 }  // namespace
 
+/*
+ AppProperties — layered .properties loader with deterministic merge order
+
+ Purpose
+   Load key/value properties from one or more configuration directories and
+   profiles, then merge them into a single map<string,string> with predictable
+   override rules. Later entries override earlier ones (last write wins).
+
+ Sources and search roots
+   - Roots come from ConfigSources.paths_ (in the provided order).
+   - Profiles come from ConfigSources.profiles (e.g., ["develop", "prod"]).
+
+ File discovery per root (directory-by-directory, file-by-file)
+   Within each config directory, files are appended to an ordered list in four
+   phases. The order below defines the base → overrides chain (earlier files
+   are overridden by later ones when keys collide):
+
+   1) application.properties
+      - If present, this is the base layer for the directory.
+
+   2) application.{profile}.properties for each profile in ConfigSources.profiles
+      - For example: application.develop.properties, application.prod.properties
+      - Appended in the order of profiles; each can override keys from (1).
+
+   3) Per-module global properties: "*.properties" excluding all application* files
+      - Constraints:
+        • Filename ends with ".properties".
+        • Filename is NOT "application.properties".
+        • Filename does NOT start with "application.".
+        • Filename contains exactly one '.' (i.e., no profile suffix), so
+          names like "mail.properties" or "service.properties" qualify.
+      - These files are appended in directory iteration order and can override
+        keys from (1) and (2).
+
+   4) Per-module profile properties: "*.{profile}.properties" (non-application)
+      - For each profile, include files whose names end with ".{profile}.properties",
+        excluding the special application.{profile}.properties handled in (2).
+      - Additional constraints:
+        • Filename contains exactly two '.' characters.
+        • Example: "mail.develop.properties", "service.prod.properties".
+      - These are appended after (3) and can override any previous phase.
+
+ Merge/precedence semantics
+   - Files are processed in the exact order constructed above for each root,
+     and the roots are processed in the order given by ConfigSources.paths_.
+   - For each file, lines are parsed via parse_envrc() which extracts
+     shell-style assignments of the form:
+       export KEY=VALUE
+     Leading spaces and commented lines (#) are ignored.
+   - Each parsed key/value is inserted into the AppProperties::properties map
+     with simple assignment (properties[key] = value). Therefore, the last
+     occurrence of a key across the ordered file set wins.
+
+ Bookkeeping
+   - processed_files records successfully parsed files in the order they were
+     applied.
+   - failed_files records files that failed to parse/open.
+
+ Practical implications
+   - Put defaults in application.properties.
+   - Override per environment in application.{profile}.properties.
+   - Split domain-specific settings into module.properties and refine with
+     module.{profile}.properties as needed.
+   - When the same key appears in multiple places, the most specific and latest
+     file in the search order takes precedence.
+*/
 struct AppProperties {
   ConfigSources& config_sources_;
   std::map<std::string, std::string> properties;
@@ -225,7 +355,7 @@ struct AppProperties {
       : config_sources_(config_sources) {
     std::vector<fs::path> ordered_paths;
     // the main order is dirctory by directory, then file by file
-    for (const auto& path : config_sources.paths) {
+    for (const auto& path : config_sources.paths_) {
       if (fs::exists(path) && fs::is_directory(path)) {
         // read application.properties
         fs::path app_properties_path = path / "application.properties";
@@ -271,7 +401,7 @@ struct AppProperties {
         }
       }
     }
-    // Process ordered paths
+    // Process ordered paths_
     for (const auto& path : ordered_paths) {
       if (fs::exists(path) && fs::is_regular_file(path)) {
         auto r = parse_envrc(path).and_then(
@@ -288,6 +418,133 @@ struct AppProperties {
         }
       }
     }
+  }
+};
+
+enum class AuthBy { USERNAME_PASSWORD, API_KEY, JWT_TOKEN };
+
+struct Permission {
+  std::string obtype;
+  std::string obid;
+  std::vector<std::string> actions;
+
+  bool isAll() {
+    return obtype == "*" && obid == "*" &&
+           actions == std::vector<std::string>{"*"};
+  }
+
+  static Permission All() { return Permission{"*", "*", {"*"}}; }
+
+  friend void tag_invoke(const json::value_from_tag&, json::value& jv,
+                         const Permission& p) {
+    jv = json::object{{"obtype", p.obtype},
+                      {"obid", p.obid},
+                      {"actions", json::value_from(p.actions)}};
+  }
+
+  friend Permission tag_invoke(const json::value_to_tag<Permission>&,
+                               const json::value& jv) {
+    Permission p;
+    p.obtype = jv.at("obtype").as_string();
+    p.obid = jv.at("obid").as_string();
+    p.actions = json::value_to<std::vector<std::string>>(jv.at("actions"));
+    return p;
+  }
+};
+
+struct SessionAttributes {
+  std::optional<uint64_t> user_id;
+  std::optional<std::string> user_name;
+  std::optional<std::string> user_email;
+  std::optional<uint64_t> created_at;
+  std::optional<uint64_t> user_quota_id;
+  std::vector<std::string> user_roles;
+  std::vector<Permission> user_permissions;
+  AuthBy auth_by = AuthBy::USERNAME_PASSWORD;
+
+  uint64_t user_id_or_throw() {
+    if (user_id) {
+      return user_id.value();
+    }
+    throw std::runtime_error("user_id is not set");
+  }
+
+  bool is_admin() const {
+    return std::find(user_roles.begin(), user_roles.end(), "admin") !=
+           user_roles.end();
+  }
+
+  void add_permissions_from_string(const std::string& json_perms_str) {
+    if (json_perms_str.empty() || json_perms_str == "{}") return;
+    try {
+      auto permissions_jv = boost::json::parse(json_perms_str);
+      auto permissions_t =
+          json::value_to<std::vector<Permission>>(permissions_jv);
+      user_permissions.insert(user_permissions.end(), permissions_t.begin(),
+                              permissions_t.end());
+    } catch (const std::exception& e) {
+      std::cerr << "Failed to parse permissions: " << e.what()
+                << ", str: " << json_perms_str << std::endl;
+    }
+  }
+
+  friend void tag_invoke(const json::value_from_tag&, json::value& jv,
+                         const SessionAttributes& sa) {
+    json::object jo{};
+
+    if (sa.user_id) {
+      jo["user_id"] = sa.user_id.value();
+    }
+    if (sa.user_name) {
+      jo["user_name"] = sa.user_name.value();
+    }
+    if (sa.user_email) {
+      jo["user_email"] = sa.user_email.value();
+    }
+    if (sa.created_at) {
+      jo["created_at"] = sa.created_at.value();
+    }
+    if (sa.user_quota_id) {
+      jo["user_quota_id"] = sa.user_quota_id.value();
+    }
+    if (!sa.user_roles.empty()) {
+      jo["user_roles"] = json::value_from(sa.user_roles);
+    }
+    if (!sa.user_permissions.empty()) {
+      jo["user_permissions"] = json::value_from(sa.user_permissions);
+    }
+    jo["auth_by"] = static_cast<int>(sa.auth_by);
+    jv = std::move(jo);
+  }
+
+  friend SessionAttributes tag_invoke(
+      const json::value_to_tag<SessionAttributes>&, const json::value& jv) {
+    SessionAttributes sa;
+    if (auto* jo_p = jv.if_object()) {
+      if (auto* user_id_p = jo_p->if_contains("user_id")) {
+        sa.user_id.emplace(user_id_p->to_number<uint64_t>());
+      }
+      if (auto* user_name_p = jo_p->if_contains("user_name")) {
+        sa.user_name.emplace(user_name_p->as_string());
+      }
+      if (auto* user_email_p = jo_p->if_contains("user_email")) {
+        sa.user_email.emplace(user_email_p->as_string());
+      }
+      if (auto* created_at_p = jo_p->if_contains("created_at")) {
+        sa.created_at.emplace(created_at_p->to_number<uint64_t>());
+      }
+      if (auto* user_quota_id_p = jo_p->if_contains("user_quota_id")) {
+        sa.user_quota_id.emplace(user_quota_id_p->to_number<uint64_t>());
+      }
+      if (auto* user_roles_p = jo_p->if_contains("user_roles")) {
+        sa.user_roles = json::value_to<std::vector<std::string>>(*user_roles_p);
+      }
+      if (auto* user_permissions_p = jo_p->if_contains("user_permissions")) {
+        sa.user_permissions =
+            json::value_to<std::vector<Permission>>(*user_permissions_p);
+      }
+    }
+    return sa;
   }
 };
 
@@ -319,12 +576,12 @@ struct HowDetail {
     return HowDetail{std::numeric_limits<int>::max()};
   }
 
-  bool is_least() { return value == std::numeric_limits<int>::min(); }
+  bool is_least() const { return value == std::numeric_limits<int>::min(); }
 
-  bool is_gt(int v) { return value > v; }
-  bool is_lt(int v) { return value < v; }
+  bool is_gt(int v) const { return value > v; }
+  bool is_lt(int v) const { return value < v; }
 
-  bool is_most() { return value == std::numeric_limits<int>::max(); }
+  bool is_most() const { return value == std::numeric_limits<int>::max(); }
 };
 
 }  // namespace cjj365

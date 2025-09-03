@@ -10,16 +10,16 @@
 #include <string>
 #include <utility>
 
-#include "client_pool_ssl.hpp"
+#include "http_client_manager.hpp"
 #include "io_monad.hpp"
 #include "result_monad.hpp"
 
 namespace monad {
 
 namespace http = boost::beast::http;
-using client_async::ClientPoolSsl;
+using cjj365::ProxySetting;
+using client_async::HttpClientManager;
 using client_async::HttpClientRequestParams;
-using client_async::ProxySetting;
 
 inline constexpr const char* DEFAULT_TARGET = "";
 
@@ -166,6 +166,12 @@ struct HttpExchange {
     return result;
   }
 
+  template <typename T>
+  MyResult<T> parseJsonResponse() {
+    return getJsonResponse().and_then(
+        [](json::value jv) -> MyResult<T> { return json::value_to<T>(jv); });
+  }
+
   MyResult<json::value> getJsonResponse() {
     try {
       if (response.has_value()) {
@@ -183,11 +189,14 @@ struct HttpExchange {
       BOOST_LOG_SEV(lg, trivial::error)
           << "Failed to get JSON response: " << e.what();
       if (response.has_value()) {
-        BOOST_LOG_SEV(lg, trivial::error)
-            << "Reponse body: " << response->body();
+        std::string max_100_chars = response->body();
+        if (max_100_chars.length() > 100) {
+          max_100_chars = max_100_chars.substr(0, 100) + "...";
+        }
+        BOOST_LOG_SEV(lg, trivial::error) << "Reponse body: " << max_100_chars;
         return MyResult<json::value>::Err(Error{
             500, std::format("Failed to parse JSON response: {}, body:\n{}",
-                             e.what(), response->body())});
+                             e.what(), max_100_chars)});
       } else {
         return MyResult<json::value>::Err(Error{
             500, std::string("Failed to parse JSON response: ") + e.what()});
@@ -208,6 +217,7 @@ struct GetStringTag {};  // Example tag
 struct GetStatusTag {};  // New tag
 struct PostJsonTag {};   // Another example tag
 struct GetHeaderTag {};
+struct DeleteTag {};
 
 template <>
 struct TagTraits<GetStringTag> {
@@ -233,19 +243,31 @@ struct TagTraits<GetHeaderTag> {
   using Response = http::response<http::empty_body>;
 };
 
+template <>
+struct TagTraits<DeleteTag> {
+  using Request = http::request<http::empty_body>;
+  using Response = http::response<http::empty_body>;
+};
+
 // ----- Monadic Constructor -----
 
 template <typename Tag>
 using ExchangePtrFor = HttpExchangePtr<typename TagTraits<Tag>::Request,
                                        typename TagTraits<Tag>::Response>;
 
+template <typename Tag>
+using ExchangeIOFor =
+    monad::IO<HttpExchangePtr<typename TagTraits<Tag>::Request,
+                              typename TagTraits<Tag>::Response>>;
+
 template <typename>
 inline constexpr bool always_false = false;
 
 template <typename Tag>
-monad::
-    IO<HttpExchangePtr<typename TagTraits<Tag>::Request,
-                       typename TagTraits<Tag>::Response>>
+ExchangeIOFor<Tag>
+// monad::
+//     IO<HttpExchangePtr<typename TagTraits<Tag>::Request,
+//                        typename TagTraits<Tag>::Response>>
     /**
      * url_view is not an owner type, so it musts be used immediately. DON'T
      * KEEP IT. and DON'T MOVE THE REFERENCE.
@@ -267,6 +289,8 @@ monad::
       make_exchange({http::verb::head, DEFAULT_TARGET, 11});
     } else if constexpr (std::is_same_v<Tag, GetStringTag>) {
       make_exchange({http::verb::get, DEFAULT_TARGET, 11});
+    } else if constexpr (std::is_same_v<Tag, DeleteTag>) {
+      make_exchange({http::verb::delete_, DEFAULT_TARGET, 11});
     } else if constexpr (std::is_same_v<Tag, PostJsonTag>) {
       Req req{http::verb::post, DEFAULT_TARGET, 11};
       req.set(http::field::content_type, "application/json");
@@ -279,7 +303,7 @@ monad::
 
 // ----- Monadic Request Invoker -----
 template <typename Tag>
-auto http_request_io(ClientPoolSsl& pool, int verbose = 0) {
+auto http_request_io(HttpClientManager& pool, int verbose = 0) {
   using Req = typename TagTraits<Tag>::Request;
   using Res = typename TagTraits<Tag>::Response;
   using ExchangePtr = HttpExchangePtr<Req, Res>;

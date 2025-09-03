@@ -17,6 +17,15 @@
 
 namespace di = boost::di;
 
+static cjj365::ConfigSources& config_sources() {
+  static cjj365::ConfigSources instance({fs::path{"config_dir"}}, {});
+  return instance;
+}
+static customio::ConsoleOutputWithColor& output() {
+  static customio::ConsoleOutputWithColor instance(4);
+  return instance;
+}
+
 TEST(MonadMysqlTest, test_running_dir) {
   auto current_dir = std::filesystem::current_path();
   std::cerr << "Current directory: " << std::filesystem::absolute(current_dir)
@@ -35,18 +44,16 @@ TEST(MonadMysqlTest, only_one_row) {
       "db/.env_local up");
   ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-                                        "config_dir"};
+  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
+  //                                       "config_dir"};
 
   // must static or else io_context_manager which holder output will got
   // SIGSEGV.
-  static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  static customio::ConsoleOutputWithColor output{4};
 
   auto injector = di::make_injector(
       di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<cjj365::ConfigSources>().to(sources),
-      di::bind<customio::IOutput>().to(output),
+      di::bind<cjj365::ConfigSources>().to(config_sources()),
+      di::bind<customio::IOutput>().to(output()),
       bind_shared_factory<monad::MonadicMysqlSession>(),
       di::bind<cjj365::IIocConfigProvider>()
           .to<cjj365::IocConfigProviderFile>());
@@ -97,15 +104,15 @@ TEST(MonadMysqlTest, list_row_ok) {
       "dbmate --env-file db/.env_local drop && dbmate --env-file "
       "db/.env_local up");
   ASSERT_EQ(rc, 0) << "Failed to reset test database";
-  std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-                                        "config_dir"};
-  static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  static customio::ConsoleOutputWithColor output{4};
+  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
+  //                                       "config_dir"};
+  // static cjj365::ConfigSources sources{config_paths, {"develop"}};
+  // static customio::ConsoleOutputWithColor output{4};
 
   auto injector = di::make_injector(
       di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<cjj365::ConfigSources>().to(sources),
-      di::bind<customio::IOutput>().to(output),
+      di::bind<cjj365::ConfigSources>().to(config_sources()),
+      di::bind<customio::IOutput>().to(output()),
       bind_shared_factory<monad::MonadicMysqlSession>(),
       di::bind<cjj365::IIocConfigProvider>()
           .to<cjj365::IocConfigProviderFile>());
@@ -142,15 +149,15 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
       "db/.env_local up");
   ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-                                        "config_dir"};
-  static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  static customio::ConsoleOutputWithColor output{4};
+  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
+  //                                       "config_dir"};
+  // static cjj365::ConfigSources sources{config_paths, {"develop"}};
+  // static customio::ConsoleOutputWithColor output{4};
 
   auto injector = di::make_injector(
       di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<customio::IOutput>().to(output),
-      di::bind<cjj365::ConfigSources>().to(sources),
+      di::bind<customio::IOutput>().to(output()),
+      di::bind<cjj365::ConfigSources>().to(config_sources()),
       bind_shared_factory<monad::MonadicMysqlSession>(),
       di::bind<cjj365::IIocConfigProvider>()
           .to<cjj365::IocConfigProviderFile>());
@@ -185,15 +192,15 @@ TEST(MonadMysqlTest, sql_failed) {
       "db/.env_local up");
   ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-                                        "config_dir"};
-  static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  static customio::ConsoleOutputWithColor output{4};
+  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
+  //                                       "config_dir"};
+  // static cjj365::ConfigSources sources{config_paths, {"develop"}};
+  // static customio::ConsoleOutputWithColor output{4};
 
   auto injector = di::make_injector(
       di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<customio::IOutput>().to(output),
-      di::bind<cjj365::ConfigSources>().to(sources),
+      di::bind<customio::IOutput>().to(output()),
+      di::bind<cjj365::ConfigSources>().to(config_sources()),
       bind_shared_factory<monad::MonadicMysqlSession>(),
       di::bind<cjj365::IIocConfigProvider>()
           .to<cjj365::IocConfigProviderFile>());

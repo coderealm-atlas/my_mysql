@@ -5,6 +5,7 @@
 #include <boost/beast/http/file_body_fwd.hpp>
 #include <boost/beast/http/message_fwd.hpp>
 #include <filesystem>
+#include <iostream>
 
 #include "httpclient_error_codes.hpp"
 #include "io_monad.hpp"
@@ -17,9 +18,12 @@ namespace apihandler {
 
 template <typename T>
 struct ApiResponse {
-  std::variant<T, std::vector<T>> data;
+  std::variant<std::monostate, T, std::vector<T>> data = std::monostate{};
   std::optional<resp::DataMeta> meta;
   std::string content_type = "application/json";
+
+  // Default constructor
+  ApiResponse() = default;
 
   // Constructors
   template <typename U = T>
@@ -70,9 +74,43 @@ struct ApiResponse {
 
   bool is_single() const { return std::holds_alternative<T>(data); }
   bool is_list() const { return std::holds_alternative<std::vector<T>>(data); }
+  bool is_empty() const { return std::holds_alternative<std::monostate>(data); }
+
+  friend ApiResponse<T> tag_invoke(const json::value_to_tag<ApiResponse<T>>&,
+                                   const json::value& jv) {
+    ApiResponse<T> resp{};  // default-constructed, data is monostate
+    if (auto* jo = jv.if_object()) {
+      if (auto* data_p = jo->if_contains("data")) {
+        if (auto* data_array_p = data_p->if_array()) {
+          std::vector<T> vec;
+          vec.reserve(data_array_p->size());
+          for (size_t i = 0; i < data_array_p->size(); ++i) {
+            vec.push_back(json::value_to<T>((*data_array_p)[i]));
+          }
+          resp.data = std::move(vec);
+        } else {
+          resp.data = json::value_to<T>(*data_p);
+        }
+      }
+      if (auto* meta_p = jo->if_contains("meta")) {
+        resp.meta = json::value_to<resp::DataMeta>(*meta_p);
+      }
+    }
+    return resp;
+  }
 };
 
 struct NoContent {};
+
+struct Success {
+  int64_t code;
+  std::string message;
+
+  friend void tag_invoke(const json::value_from_tag&, json::value& jv,
+                         const Success& s) {
+    jv = json::value{{"code", s.code}, {"message", s.message}};
+  }
+};
 
 struct DownloadInline {
   std::string content;
@@ -172,6 +210,19 @@ struct ResponseGenerator {
     http::response<http::empty_body> res;
     res.version(11);
     res.result(http::status::no_content);
+    return make_io_response(std::move(res));
+  }
+
+  // Success → string_body
+  auto operator()(Success&& s) const {
+    http::response<http::string_body> res;
+    res.version(11);
+    res.result(http::status::ok);
+    json::value jv = json::value_from(s);
+    std::string body = json::serialize(jv);
+    res.body() = std::move(body);
+    res.set(http::field::content_type, "application/json");
+    res.prepare_payload();
     return make_io_response(std::move(res));
   }
 };
