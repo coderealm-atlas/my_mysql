@@ -244,6 +244,21 @@ namespace {
 using EnvParseResult = monad::MyResult<std::map<std::string, std::string>>;
 using monad::Error;
 inline EnvParseResult parse_envrc(const fs::path& envrc) {
+  auto ltrim = [](std::string& s) {
+    size_t i = 0;
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+    if (i) s.erase(0, i);
+  };
+  auto rtrim = [](std::string& s) {
+    size_t i = s.size();
+    while (i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t')) --i;
+    if (i < s.size()) s.erase(i);
+  };
+  auto trim = [&](std::string& s) {
+    rtrim(s);
+    ltrim(s);
+  };
+
   std::string line;
   std::map<std::string, std::string> env;
   std::ifstream ifs(envrc);
@@ -252,26 +267,86 @@ inline EnvParseResult parse_envrc(const fs::path& envrc) {
         5019, std::format("Failed to open envrc file: {}", envrc.c_str())});
   }
   while (std::getline(ifs, line)) {
-    size_t pos = line.find_first_not_of(' ');
-    if (pos == std::string::npos || line[pos] == '#') continue;
-    pos = line.find("export ", pos);
-    if (pos == std::string::npos) {
+    // Normalize line endings and trim leading/trailing whitespace
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    ltrim(line);
+    if (line.empty() || line[0] == '#') continue;
+
+    // Optionally consume leading 'export' keyword (export, export\t,
+    // export<spaces>)
+    if (line.rfind("export", 0) == 0) {
+      // Ensure next char is whitespace or end
+      if (line.size() == 6 ||
+          line.size() > 6 && (line[6] == ' ' || line[6] == '\t')) {
+        line.erase(0, 6);
+        ltrim(line);
+      }
+    }
+
+    if (line.empty() || line[0] == '#') continue;
+
+    // Find key and '='
+    // Key is up to '=' or whitespace
+    size_t i = 0;
+    // Parse key characters (allow [A-Za-z_][A-Za-z0-9_]*), tolerate others but
+    // trim
+    size_t key_start = 0;
+    while (i < line.size() && line[i] != '=' && line[i] != ' ' &&
+           line[i] != '\t')
+      ++i;
+    std::string key = line.substr(key_start, i - key_start);
+    rtrim(key);
+    if (key.empty()) continue;
+
+    // Skip whitespace before '=' (allow "KEY = value")
+    size_t j = i;
+    while (j < line.size() && (line[j] == ' ' || line[j] == '\t')) ++j;
+    if (j >= line.size() || line[j] != '=') {
+      // No '=' present; treat as empty assignment only if the rest is
+      // comment/whitespace Otherwise, skip line
       continue;
     }
-    pos = line.find_first_not_of(' ', pos + 7);
-    if (pos == std::string::npos) {
-      continue;
+    ++j;  // skip '='
+    // Support '+=' by ignoring '+' before '=' (KEY+=value) — treat same as '='
+    // Already handled since we looked for '=' and consumed it; if '+' existed
+    // before, the key would contain '+'; sanitize it
+    if (!key.empty() && key.back() == '+') key.pop_back();
+
+    // Skip whitespace before value
+    while (j < line.size() && (line[j] == ' ' || line[j] == '\t')) ++j;
+    std::string value;
+    if (j < line.size()) {
+      if (line[j] == '"' || line[j] == '\'') {
+        // Quoted value; read until matching quote with simple escape handling
+        char quote = line[j++];
+        bool escape = false;
+        for (; j < line.size(); ++j) {
+          char c = line[j];
+          if (escape) {
+            value.push_back(c);
+            escape = false;
+          } else if (c == '\\') {
+            escape = true;
+          } else if (c == quote) {
+            ++j;  // consume closing quote
+            break;
+          } else {
+            value.push_back(c);
+          }
+        }
+        // Ignore trailing content after closing quote except allow inline
+        // comment that starts with #
+      } else {
+        // Unquoted: read until unquoted '#'
+        size_t k = j;
+        while (k < line.size() && line[k] != '#') ++k;
+        value = line.substr(j, k - j);
+        trim(value);
+      }
+    } else {
+      value.clear();
     }
-    size_t eq_pos = line.find('=', pos);
-    if (eq_pos == std::string::npos) {
-      continue;
-    }
-    std::string key = line.substr(pos, eq_pos - pos);
-    pos = line.find_first_not_of(' ', eq_pos + 1);
-    if (pos == std::string::npos) {
-      continue;
-    }
-    std::string value = line.substr(pos);
+
     env[key] = value;
   }
   return EnvParseResult::Ok(env);
@@ -298,11 +373,13 @@ inline EnvParseResult parse_envrc(const fs::path& envrc) {
    1) application.properties
       - If present, this is the base layer for the directory.
 
-   2) application.{profile}.properties for each profile in ConfigSources.profiles
+   2) application.{profile}.properties for each profile in
+ ConfigSources.profiles
       - For example: application.develop.properties, application.prod.properties
       - Appended in the order of profiles; each can override keys from (1).
 
-   3) Per-module global properties: "*.properties" excluding all application* files
+   3) Per-module global properties: "*.properties" excluding all application*
+ files
       - Constraints:
         • Filename ends with ".properties".
         • Filename is NOT "application.properties".
@@ -313,8 +390,9 @@ inline EnvParseResult parse_envrc(const fs::path& envrc) {
         keys from (1) and (2).
 
    4) Per-module profile properties: "*.{profile}.properties" (non-application)
-      - For each profile, include files whose names end with ".{profile}.properties",
-        excluding the special application.{profile}.properties handled in (2).
+      - For each profile, include files whose names end with
+ ".{profile}.properties", excluding the special application.{profile}.properties
+ handled in (2).
       - Additional constraints:
         • Filename contains exactly two '.' characters.
         • Example: "mail.develop.properties", "service.prod.properties".
@@ -412,8 +490,10 @@ struct AppProperties {
               return monad::MyResult<void>::Ok();
             });
         if (r.is_err()) {
+          DEBUG_PRINT("Failed to parse envrc: {}" << path);
           failed_files.push_back(path);
         } else {
+          DEBUG_PRINT("Successfully parsed envrc: {}" << path);
           processed_files.push_back(path);
         }
       }

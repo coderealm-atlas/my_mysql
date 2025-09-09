@@ -1,11 +1,14 @@
 #pragma once
 
+#include <algorithm>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/json.hpp>
 #include <cstdint>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "json_util.hpp"
@@ -80,7 +83,11 @@ struct ProxySetting {
       }
       proxy.username = jo->at("username").as_string().c_str();
       proxy.password = jo->at("password").as_string().c_str();
-      proxy.disabled = jo->at("disabled").as_bool();
+      if (auto* disabled_p = jo->if_contains("disabled")) {
+        proxy.disabled = json::value_to<bool>(*disabled_p);
+      } else {
+        proxy.disabled = false;
+      }
     } else {
       throw std::invalid_argument("Invalid JSON for ProxySetting");
     }
@@ -127,6 +134,7 @@ class HttpclientConfig {
   ssl::context::method ssl_method = ssl::context::method::tlsv12_client;
   int threads_num = 0;
   bool default_verify_path = true;
+  bool insecure_skip_verify = false;
   std::vector<std::string> verify_paths;
   std::vector<HttpclientCertificate> certificates;
   std::vector<HttpclientCertificateFile> certificate_files;
@@ -136,41 +144,51 @@ class HttpclientConfig {
   friend HttpclientConfig tag_invoke(
       const json::value_to_tag<HttpclientConfig>&, const json::value& jv) {
     HttpclientConfig config;
-    if (auto* jo = jv.if_object()) {
-      if (auto* ssl_method_p = jo->if_contains("ssl_method")) {
-        config.ssl_method =
-            ssl_method_from_string(ssl_method_p->as_string().c_str());
+    try {
+      if (auto* jo = jv.if_object()) {
+        if (auto* ssl_method_p = jo->if_contains("ssl_method")) {
+          config.ssl_method = ssl_method_from_string(
+              json::value_to<std::string>(*ssl_method_p));
+        }
+        config.threads_num = jv.at("threads_num").to_number<int>();
+        if (config.threads_num < 0) {
+          throw std::invalid_argument("threads_num must be non-negative");
+        }
+        if (auto* verify_paths_p = jo->if_contains("verify_paths")) {
+          config.verify_paths =
+              json::value_to<std::vector<std::string>>(*verify_paths_p);
+        }
+        if (auto* insecure_p = jo->if_contains("insecure_skip_verify")) {
+          config.insecure_skip_verify = json::value_to<bool>(*insecure_p);
+        }
+        if (auto* certificates_p = jo->if_contains("certificates")) {
+          config.certificates =
+              json::value_to<std::vector<HttpclientCertificate>>(
+                  *certificates_p);
+        }
+        if (auto* certificate_files_p = jo->if_contains("certificate_files")) {
+          config.certificate_files =
+              json::value_to<std::vector<HttpclientCertificateFile>>(
+                  *certificate_files_p);
+        }
+        if (auto* proxy_pool_p = jo->if_contains("proxy_pool")) {
+          config.proxy_pool =
+              json::value_to<std::vector<cjj365::ProxySetting>>(*proxy_pool_p);
+          config.proxy_pool.erase(
+              std::remove_if(config.proxy_pool.begin(), config.proxy_pool.end(),
+                             [](const cjj365::ProxySetting& proxy) {
+                               return proxy.disabled;
+                             }),
+              config.proxy_pool.end());
+        }
+        return config;
+      } else {
+        throw std::invalid_argument("HttpclientConfig must be an object.");
       }
-      config.threads_num = jv.at("threads_num").to_number<int>();
-      if (config.threads_num < 0) {
-        throw std::invalid_argument("threads_num must be non-negative");
-      }
-      if (auto* verify_paths_p = jo->if_contains("verify_paths")) {
-        config.verify_paths =
-            json::value_to<std::vector<std::string>>(*verify_paths_p);
-      }
-      if (auto* certificates_p = jo->if_contains("certificates")) {
-        config.certificates =
-            json::value_to<std::vector<HttpclientCertificate>>(*certificates_p);
-      }
-      if (auto* certificate_files_p = jo->if_contains("certificate_files")) {
-        config.certificate_files =
-            json::value_to<std::vector<HttpclientCertificateFile>>(
-                *certificate_files_p);
-      }
-      if (auto* proxy_pool_p = jo->if_contains("proxy_pool")) {
-        config.proxy_pool =
-            json::value_to<std::vector<cjj365::ProxySetting>>(*proxy_pool_p);
-        config.proxy_pool.erase(
-            std::remove_if(config.proxy_pool.begin(), config.proxy_pool.end(),
-                           [](const cjj365::ProxySetting& proxy) {
-                             return proxy.disabled;
-                           }),
-            config.proxy_pool.end());
-      }
-      return config;
+    } catch (const std::exception& e) {
+      throw std::invalid_argument("Invalid JSON for HttpclientConfig: " +
+                                  std::string(e.what()));
     }
-    throw std::invalid_argument("Invalid JSON for HttpclientConfig");
   }
 
   int get_threads_num() const {
@@ -182,6 +200,7 @@ class HttpclientConfig {
   }
   ssl::context::method get_ssl_method() const { return ssl_method; }
   bool get_default_verify_path() const { return default_verify_path; }
+  bool get_insecure_skip_verify() const { return insecure_skip_verify; }
   const std::vector<std::string>& get_verify_paths() const {
     return verify_paths;
   }

@@ -146,36 +146,34 @@ struct MysqlSessionState {
     return monad::MyResult<uint64_t>::Ok(results[result_index].affected_rows());
   }
 
-  monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>
+  monad::MyResult<std::pair<mysql::resultset_view, int64_t>>
   expect_list_of_rows(const std::string& message, int rows_result_index,
                       int total_result_index) {
+    using RtypeIO = monad::MyResult<std::pair<mysql::resultset_view, int64_t>>;
     if (has_error()) {
-      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
+      return RtypeIO::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
     if (results.size() <= rows_result_index ||
         results.size() <= total_result_index) {
-      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
+      return RtypeIO::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
     }
     auto rows_resultset = results[rows_result_index];
     if (rows_result_index == total_result_index) {
       // If both results are the same, we can return directly
-      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Ok(
-          std::make_pair(std::move(rows_resultset),
-                         rows_resultset.rows().size()));
+      return RtypeIO::Ok(std::make_pair(std::move(rows_resultset),
+                                        rows_resultset.rows().size()));
     }
     if (results[total_result_index].rows().empty()) {
       std::string nm = "missing total rows result in " + message;
-      return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Err(
-          monad::Error{db_errors::SQL_EXEC::NO_ROWS, nm});
+      return RtypeIO::Err(monad::Error{db_errors::SQL_EXEC::NO_ROWS, nm});
     }
     uint64_t total = results[total_result_index].rows().at(0).at(0).as_int64();
-    return monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>::Ok(
-        std::make_pair(std::move(rows_resultset), total));
+    return RtypeIO::Ok(std::make_pair(std::move(rows_resultset), total));
   }
 
-  monad::MyResult<std::pair<mysql::resultset_view, uint64_t>>
+  monad::MyResult<std::pair<mysql::resultset_view, int64_t>>
   expect_all_list_of_rows(const std::string& message, int rows_result_index) {
     return expect_list_of_rows(message, rows_result_index, rows_result_index);
   }

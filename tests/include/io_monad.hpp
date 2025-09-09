@@ -117,6 +117,16 @@ class IO {
   }
 
   /**
+   * Lift a MyResult<T> into IO<T> without additional effects.
+   * - Useful when an operation already produced a Result and you want to
+   *   continue in the IO pipeline.
+   */
+  static IO<T> from_result(Result<T, Error> res) {
+    return IO([res = std::make_shared<Result<T, Error>>(std::move(res))](
+                  Callback cb) mutable { cb(std::move(*res)); });
+  }
+
+  /**
    * Shallow copy the IO thunk. Useful for retry/backoff.
    *
    * Callable requirements:
@@ -144,17 +154,18 @@ class IO {
    *   - If U is void, the result is IO<void> and the value is discarded.
    *
    * What NOT to return:
-   * - Do not return monad::Error or Result from f. Use then() to return an IO<...>
-   *   when you need to produce a failure, or use map_err()/catch_then() to handle errors.
+   * - Do not return monad::Error or Result from f. Use then() to return an
+   * IO<...> when you need to produce a failure, or use map_err()/catch_then()
+   * to handle errors.
    *
    * Error semantics:
    * - If this IO is an error, f is not called and the error is propagated.
    * - If f throws, the exception is caught and converted to Error{-1, what()}.
    *
-   * For IO<void>, see the specialization below where f has signature void() -> void.
+   * For IO<void>, see the specialization below where f has signature void() ->
+   * void.
    */
-  auto map(F&& f) const
-      -> IO<decltype(std::declval<F>()(std::declval<T>()))> {
+  auto map(F&& f) const -> IO<decltype(std::declval<F>()(std::declval<T>()))> {
     using RetT = decltype(std::declval<F>()(std::declval<T>()));
 
     return IO<RetT>([prev_ptr = std::make_shared<IO<T>>(*this),
@@ -189,8 +200,9 @@ class IO {
    *   The returned IO<U> is executed and flattened.
    *
    * What NOT to return:
-   * - Do not return a plain value U or Result. Use map() to transform to a value
-   *   or wrap the value with IO<U>::pure(U). Returning Result is not supported here.
+   * - Do not return a plain value U or Result. Use map() to transform to a
+   * value or wrap the value with IO<U>::pure(U). Returning Result is not
+   * supported here.
    *
    * Error semantics:
    * - If this IO is an error, f is not called and the error is propagated.
@@ -229,11 +241,12 @@ class IO {
    * - f: Error -> IO<T>
    *
    * What NOT to return:
-   * - Do not return a plain T or Result. You must return IO<T> here if you want to
-   *   recover. To simply transform the Error, use map_err().
+   * - Do not return a plain T or Result. You must return IO<T> here if you want
+   * to recover. To simply transform the Error, use map_err().
    *
    * Error semantics:
-   * - Runs only when this IO is an error; otherwise passes through the success value.
+   * - Runs only when this IO is an error; otherwise passes through the success
+   * value.
    * - If f throws, the exception is caught and converted to Error{-3, what()}.
    */
   IO<T> catch_then(F&& f) const {
@@ -262,8 +275,8 @@ class IO {
    * - f: Error -> Error (pure mapping)
    *
    * What NOT to return:
-   * - Do not return IO<...> or throw to recover. To recover asynchronously, use catch_then().
-   *   map_err() is for pure Error-to-Error transformation only.
+   * - Do not return IO<...> or throw to recover. To recover asynchronously, use
+   * catch_then(). map_err() is for pure Error-to-Error transformation only.
    */
   IO<T> map_err(std::function<Error(Error)> f) const {
     return IO<T>([prev = *this, f = std::move(f)](typename IO<T>::Callback cb) {
@@ -289,7 +302,8 @@ class IO {
    *   prefer finally_then() so cleanup can be expressed as IO.
    *
    * Error semantics:
-   * - Finalizer exceptions are not caught here; ensure f() is noexcept if needed.
+   * - Finalizer exceptions are not caught here; ensure f() is noexcept if
+   * needed.
    */
   IO<T> finally(std::function<void()> f) const {
     return IO<T>([prev = *this, f = std::move(f)](Callback cb) {
@@ -309,10 +323,12 @@ class IO {
    *
    * What NOT to return:
    * - Do not return a value, Error, or Result; the cleanup must be an IO<void>.
-   *   This method does not alter the original result; the cleanup's outcome is ignored.
+   *   This method does not alter the original result; the cleanup's outcome is
+   * ignored.
    *
    * Error semantics:
-   * - Cleanup IO is run and its result is ignored; the original result is returned.
+   * - Cleanup IO is run and its result is ignored; the original result is
+   * returned.
    * - If f throws, the original result is still returned.
    */
   IO<T> finally_then(F&& f) const {
@@ -320,10 +336,11 @@ class IO {
       prev.run([f = std::move(f), cb = std::move(cb)](IOResult result) mutable {
         try {
           auto cleanup_io = f();
-          cleanup_io.run([result = std::move(result), cb = std::move(cb)](auto) mutable {
-            // Ignore cleanup result, return original result
-            cb(std::move(result));
-          });
+          cleanup_io.run(
+              [result = std::move(result), cb = std::move(cb)](auto) mutable {
+                // Ignore cleanup result, return original result
+                cb(std::move(result));
+              });
         } catch (const std::exception& e) {
           // If cleanup throws, still return original result
           cb(std::move(result));
@@ -369,7 +386,8 @@ class IO {
   }
 
   /**
-   * Fail with timeout if this IO doesn't complete within duration (rvalue-qualified).
+   * Fail with timeout if this IO doesn't complete within duration
+   * (rvalue-qualified).
    *
    * Callable requirements:
    * - N/A
@@ -419,15 +437,18 @@ class IO {
    * Conditional exponential backoff retry.
    *
    * Callable requirements:
-   * - should_retry: const Error& -> bool (decides whether to retry on a given error)
+   * - should_retry: const Error& -> bool (decides whether to retry on a given
+   * error)
    *
    * What NOT to return:
    * - Do not throw from should_retry; return false to stop retrying.
-   * - Do not block/sleep inside should_retry; backoff is handled by the operator.
+   * - Do not block/sleep inside should_retry; backoff is handled by the
+   * operator.
    *
    * Error semantics:
-   * - Retries up to max_attempts while should_retry(error) is true, doubling delay
-   *   each time starting from initial_delay. Returns the first success or the last error.
+   * - Retries up to max_attempts while should_retry(error) is true, doubling
+   * delay each time starting from initial_delay. Returns the first success or
+   * the last error.
    */
   IO<T> retry_exponential_if(
       int max_attempts, std::chrono::milliseconds initial_delay,
@@ -537,6 +558,21 @@ class IO<void> {
   }
 
   /**
+   * Lift a MyVoidResult into IO<void>.
+   * - Success maps to std::monostate success; error is propagated.
+   */
+  static IO<void> from_result(Result<void, Error> res) {
+    return IO([res = std::make_shared<Result<void, Error>>(std::move(res))](
+                  Callback cb) mutable {
+      if (res->is_ok()) {
+        cb(std::monostate{});
+      } else {
+        cb(res->error());
+      }
+    });
+  }
+
+  /**
    * Shallow copy the IO thunk. Useful for retry/backoff.
    * - No execution occurs.
    */
@@ -555,7 +591,8 @@ class IO<void> {
    *
    * What NOT to return:
    * - Do not return a value, Error, or Result; the callable must return void.
-   *   To produce another IO, use then(); to handle errors, use catch_then/map_err.
+   *   To produce another IO, use then(); to handle errors, use
+   * catch_then/map_err.
    *
    * Error semantics:
    * - If this IO is an error, f is not called and the error is propagated.
@@ -589,7 +626,8 @@ class IO<void> {
    *
    * What NOT to return:
    * - Do not return a plain value U or Result. Use map() for side effects only,
-   *   or wrap a value with IO<U>::pure(U). Returning Result is not supported here.
+   *   or wrap a value with IO<U>::pure(U). Returning Result is not supported
+   * here.
    *
    * Error semantics:
    * - On error, propagate the error; f is not called.
@@ -655,7 +693,8 @@ class IO<void> {
    * - f: Error -> Error (pure mapping)
    *
    * What NOT to return:
-   * - Do not return IO<...> or throw to recover. To recover asynchronously, use catch_then().
+   * - Do not return IO<...> or throw to recover. To recover asynchronously, use
+   * catch_then().
    */
   IO<void> map_err(std::function<Error(Error)> f) const {
     return IO<void>([prev = *this, f = std::move(f)](Callback cb) {
@@ -676,10 +715,12 @@ class IO<void> {
    * - f: void() -> void
    *
    * What NOT to return:
-   * - N/A (return is ignored). If cleanup must perform IO or can fail, prefer finally_then().
+   * - N/A (return is ignored). If cleanup must perform IO or can fail, prefer
+   * finally_then().
    *
    * Error semantics:
-   * - Finalizer exceptions are not caught here; ensure f() is noexcept if needed.
+   * - Finalizer exceptions are not caught here; ensure f() is noexcept if
+   * needed.
    */
   IO<void> finally(std::function<void()> f) const {
     return IO<void>([prev = *this, f = std::move(f)](Callback cb) {
@@ -706,14 +747,16 @@ class IO<void> {
    * - If f throws, the original result is still returned.
    */
   IO<void> finally_then(F&& f) const {
-    return IO<void>([prev = *this, f = std::forward<F>(f)](Callback cb) mutable {
+    return IO<void>([prev = *this,
+                     f = std::forward<F>(f)](Callback cb) mutable {
       prev.run([f = std::move(f), cb = std::move(cb)](IOResult result) mutable {
         try {
           auto cleanup_io = f();
-          cleanup_io.run([result = std::move(result), cb = std::move(cb)](auto) mutable {
-            // Ignore cleanup result, return original result
-            cb(std::move(result));
-          });
+          cleanup_io.run(
+              [result = std::move(result), cb = std::move(cb)](auto) mutable {
+                // Ignore cleanup result, return original result
+                cb(std::move(result));
+              });
         } catch (const std::exception& e) {
           // If cleanup throws, still return original result
           cb(std::move(result));
