@@ -18,6 +18,7 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/url.hpp>  // IWYU pragma: keep
 #include <cstdint>
+#include <numbers>
 
 #include "base64.h"
 #include "common_macros.hpp"
@@ -108,12 +109,30 @@ struct MysqlSessionState {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, nm});
     }
-    if (results[result_index].rows()[0].at(id_column_index).is_null()) {
+    auto id_column = results[result_index].rows()[0].at(id_column_index);
+    if (id_column.is_null()) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::NULL_ID, message});
     }
     return monad::MyResult<mysql::row_view>::Ok(
         results[result_index].rows()[0]);
+  }
+
+  monad::MyResult<std::optional<mysql::row_view>> maybe_one_row(
+      int result_index, int id_column_index) {
+    return expect_one_row("maybe_one_row", result_index, id_column_index)
+        .and_then([](mysql::row_view row) {
+          return monad::MyResult<std::optional<mysql::row_view>>::Ok(
+              std::make_optional(row));
+        })
+        .catch_then([this](monad::Error err) {
+          if (err.code == db_errors::SQL_EXEC::NO_ROWS ||
+              err.code == db_errors::SQL_EXEC::NULL_ID) {
+            return monad::MyResult<std::optional<mysql::row_view>>::Ok(
+                std::nullopt);
+          }
+          return monad::MyResult<std::optional<mysql::row_view>>::Err(err);
+        });
   }
 
   monad::MyVoidResult expect_affected_one_row(const std::string& message,
