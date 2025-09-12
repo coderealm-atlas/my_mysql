@@ -1,0 +1,1 @@
+DATABASE_URL="mysql://user_run_tests:Iek5roe0ohv1eifohrahVi0woomoh9oWiev0phei3Te8soo6ohgie7Chauneeng7@home-t630.cjj365.cc:3306/cjj365_test_simple"
