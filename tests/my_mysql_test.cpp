@@ -18,16 +18,79 @@
 
 namespace di = boost::di;
 
-static cjj365::ConfigSources& config_sources() {
-  static cjj365::ConfigSources instance({fs::path{"config_dir"}}, {});
-  return instance;
-}
-static customio::ConsoleOutputWithColor& output() {
-  static customio::ConsoleOutputWithColor instance(4);
-  return instance;
-}
+// Test fixture class to reduce duplication
+class MonadMysqlTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    // Reset database for each test
+    int rc = std::system(
+        "dbmate --env-file db/.env_test --migrations-dir db/test_migrations "
+        "drop && dbmate --env-file "
+        "db/.env_test --migrations-dir db/test_migrations up");
+    ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-TEST(MonadMysqlTest, test_running_dir) {
+    // Create injector
+    injector_ = std::make_unique<decltype(di::make_injector(
+        di::bind<sql::IMysqlConfigProvider>()
+            .to<sql::MysqlConfigProviderFile>(),
+        di::bind<cjj365::ConfigSources>().to(config_sources()),
+        di::bind<customio::IOutput>().to(output()),
+        bind_shared_factory<monad::MonadicMysqlSession>(),
+        di::bind<cjj365::IIocConfigProvider>()
+            .to<cjj365::IocConfigProviderFile>()))>(
+        di::make_injector(
+            di::bind<sql::IMysqlConfigProvider>()
+                .to<sql::MysqlConfigProviderFile>(),
+            di::bind<cjj365::ConfigSources>().to(config_sources()),
+            di::bind<customio::IOutput>().to(output()),
+            bind_shared_factory<monad::MonadicMysqlSession>(),
+            di::bind<cjj365::IIocConfigProvider>()
+                .to<cjj365::IocConfigProviderFile>()));
+
+    // Create session factory and session
+    session_factory_ = injector_->create<monad::MonadicMysqlSession::Factory>();
+    session_ = session_factory_();
+  }
+
+  void TearDown() override {
+    if (injector_) {
+      auto& ioc_manager = injector_->create<cjj365::IoContextManager&>();
+    }
+  }
+
+  // Helper method to wait for async operations
+  void waitForCompletion() { notifier_.waitForNotification(); }
+
+  // Helper method to notify completion
+  void notifyCompletion() { notifier_.notify(); }
+
+  // Static helper functions
+  static cjj365::ConfigSources& config_sources() {
+    static cjj365::ConfigSources instance({fs::path{"config_dir"}},
+                                          {"test", "develop"});
+    return instance;
+  }
+
+  static customio::ConsoleOutputWithColor& output() {
+    static customio::ConsoleOutputWithColor instance(5);
+    return instance;
+  }
+
+  // Protected members available to test methods
+  misc::ThreadNotifier notifier_;
+  std::unique_ptr<decltype(di::make_injector(
+      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
+      di::bind<cjj365::ConfigSources>().to(config_sources()),
+      di::bind<customio::IOutput>().to(output()),
+      bind_shared_factory<monad::MonadicMysqlSession>(),
+      di::bind<cjj365::IIocConfigProvider>()
+          .to<cjj365::IocConfigProviderFile>()))>
+      injector_;
+  monad::MonadicMysqlSession::Factory session_factory_;
+  std::shared_ptr<monad::MonadicMysqlSession> session_;
+};
+
+TEST_F(MonadMysqlTest, test_running_dir) {
   auto current_dir = std::filesystem::current_path();
   std::cerr << "Current directory: " << std::filesystem::absolute(current_dir)
             << std::endl;
@@ -37,32 +100,10 @@ TEST(MonadMysqlTest, test_running_dir) {
 // gdb --args ./build/tests/my_mysql_test
 // --gtest_filter=MonadMysqlTest.only_one_row
 // clang-format on
-TEST(MonadMysqlTest, only_one_row) {
-  misc::ThreadNotifier notifier;
+TEST_F(MonadMysqlTest, only_one_row) {
   using namespace monad;
-  int rc = std::system(
-      "dbmate --env-file db/.env_local drop && dbmate --env-file "
-      "db/.env_local up");
-  ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-  //                                       "config_dir"};
-
-  // must static or else io_context_manager which holder output will got
-  // SIGSEGV.
-
-  auto injector = di::make_injector(
-      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<cjj365::ConfigSources>().to(config_sources()),
-      di::bind<customio::IOutput>().to(output()),
-      bind_shared_factory<monad::MonadicMysqlSession>(),
-      di::bind<cjj365::IIocConfigProvider>()
-          .to<cjj365::IocConfigProviderFile>());
-
-  auto session_factory = injector.create<monad::MonadicMysqlSession::Factory>();
-  auto session = session_factory();
-
-  session
+  session_
       ->run_query(
           "INSERT INTO cjj365_users (name, email, password, roles, state) "
           "VALUES ('jianglibo', 'jianglibo@hotmail.com', 'password123', "
@@ -72,7 +113,7 @@ TEST(MonadMysqlTest, only_one_row) {
         return IO<MysqlSessionState>::pure(std::move(state));
       })
       .then([&](auto) {
-        return session->run_query("SELECT COUNT(*) FROM cjj365_users")
+        return session_->run_query("SELECT COUNT(*) FROM cjj365_users")
             .then([&](auto state) {
               EXPECT_FALSE(state.has_error());
               auto result =
@@ -82,8 +123,9 @@ TEST(MonadMysqlTest, only_one_row) {
               return IO<MysqlSessionState>::pure(std::move(state));
             });
       })
-      .then(
-          [&](auto) { return session->run_query("DELETE FROM cjj365_users;"); })
+      .then([&](auto) {
+        return session_->run_query("DELETE FROM cjj365_users;");
+      })
       .map([&](auto state) {
         auto rr = state.expect_affected_one_row("Expected one row deleted", 0);
         EXPECT_TRUE(rr.is_ok());
@@ -91,37 +133,16 @@ TEST(MonadMysqlTest, only_one_row) {
       })
       .run([&](auto r) {
         EXPECT_TRUE(r.is_ok());
-        notifier.notify();
+        notifyCompletion();
       });
 
-  notifier.waitForNotification();
-  auto& ioc_manager = injector.create<cjj365::IoContextManager&>();
+  waitForCompletion();
 }
 
-TEST(MonadMysqlTest, list_row_ok) {
-  misc::ThreadNotifier notifier;
+TEST_F(MonadMysqlTest, list_row_ok) {
   using namespace monad;
-  int rc = std::system(
-      "dbmate --env-file db/.env_local drop && dbmate --env-file "
-      "db/.env_local up");
-  ASSERT_EQ(rc, 0) << "Failed to reset test database";
-  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-  //                                       "config_dir"};
-  // static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  // static customio::ConsoleOutputWithColor output{4};
 
-  auto injector = di::make_injector(
-      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<cjj365::ConfigSources>().to(config_sources()),
-      di::bind<customio::IOutput>().to(output()),
-      bind_shared_factory<monad::MonadicMysqlSession>(),
-      di::bind<cjj365::IIocConfigProvider>()
-          .to<cjj365::IocConfigProviderFile>());
-
-  auto session_factory = injector.create<monad::MonadicMysqlSession::Factory>();
-  auto session = session_factory();
-
-  session
+  session_
       ->run_query(
           "SELECT * FROM cjj365_users;SELECT COUNT(*) FROM cjj365_users;")
       .then([&](auto state) {
@@ -135,38 +156,16 @@ TEST(MonadMysqlTest, list_row_ok) {
       })
       .run([&](auto r) {
         EXPECT_TRUE(r.is_ok());
-        notifier.notify();
+        notifyCompletion();
       });
 
-  notifier.waitForNotification();
-  auto& ioc_manager = injector.create<cjj365::IoContextManager&>();
+  waitForCompletion();
 }
 
-TEST(MonadMysqlTest, list_row_out_of_bounds) {
-  misc::ThreadNotifier notifier;
+TEST_F(MonadMysqlTest, list_row_out_of_bounds) {
   using namespace monad;
-  int rc = std::system(
-      "dbmate --env-file db/.env_local drop && dbmate --env-file "
-      "db/.env_local up");
-  ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-  //                                       "config_dir"};
-  // static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  // static customio::ConsoleOutputWithColor output{4};
-
-  auto injector = di::make_injector(
-      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<customio::IOutput>().to(output()),
-      di::bind<cjj365::ConfigSources>().to(config_sources()),
-      bind_shared_factory<monad::MonadicMysqlSession>(),
-      di::bind<cjj365::IIocConfigProvider>()
-          .to<cjj365::IocConfigProviderFile>());
-
-  auto session_factory = injector.create<monad::MonadicMysqlSession::Factory>();
-  auto session = session_factory();
-
-  session
+  session_
       ->run_query(
           "SELECT * FROM cjj365_users;SELECT COUNT(*) FROM cjj365_users;")
       .then([&](auto state) {
@@ -178,68 +177,29 @@ TEST(MonadMysqlTest, list_row_out_of_bounds) {
       })
       .run([&](auto r) {
         EXPECT_FALSE(r.is_err());
-        notifier.notify();
+        notifyCompletion();
       });
 
-  notifier.waitForNotification();
-  auto& ioc_manager = injector.create<cjj365::IoContextManager&>();
+  waitForCompletion();
 }
 
-TEST(MonadMysqlTest, sql_failed) {
-  misc::ThreadNotifier notifier;
+TEST_F(MonadMysqlTest, sql_failed) {
   using namespace monad;
-  int rc = std::system(
-      "dbmate --env-file db/.env_local drop && dbmate --env-file "
-      "db/.env_local up");
-  ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  // std::vector<fs::path> config_paths = {std::filesystem::current_path() /
-  //                                       "config_dir"};
-  // static cjj365::ConfigSources sources{config_paths, {"develop"}};
-  // static customio::ConsoleOutputWithColor output{4};
-
-  auto injector = di::make_injector(
-      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<customio::IOutput>().to(output()),
-      di::bind<cjj365::ConfigSources>().to(config_sources()),
-      bind_shared_factory<monad::MonadicMysqlSession>(),
-      di::bind<cjj365::IIocConfigProvider>()
-          .to<cjj365::IocConfigProviderFile>());
-
-  auto session_factory = injector.create<monad::MonadicMysqlSession::Factory>();
-  auto session = session_factory();
-
-  session->run_query("SELECT x* FROM cjj365_users;").run([&](auto r) {
+  session_->run_query("SELECT x* FROM cjj365_users;").run([&](auto r) {
     auto rr = r.value().expect_one_row("Expect fail", 0, 0);
     EXPECT_TRUE(rr.is_err());
     EXPECT_EQ(rr.error().code, db_errors::SQL_EXEC::SQL_FAILED);
-    notifier.notify();
+    notifyCompletion();
   });
 
-  notifier.waitForNotification();
-  auto& ioc_manager = injector.create<cjj365::IoContextManager&>();
+  waitForCompletion();
 }
 
-TEST(MonadMysqlTest, maybe_one_row) {
-  misc::ThreadNotifier notifier;
+TEST_F(MonadMysqlTest, maybe_one_row) {
   using namespace monad;
-  int rc = std::system(
-      "dbmate --env-file db/.env_local drop && dbmate --env-file "
-      "db/.env_local up");
-  ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-  auto injector = di::make_injector(
-      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<cjj365::ConfigSources>().to(config_sources()),
-      di::bind<customio::IOutput>().to(output()),
-      bind_shared_factory<monad::MonadicMysqlSession>(),
-      di::bind<cjj365::IIocConfigProvider>()
-          .to<cjj365::IocConfigProviderFile>());
-
-  auto session_factory = injector.create<monad::MonadicMysqlSession::Factory>();
-  auto session = session_factory();
-
-  session->run_query("SELECT * FROM cjj365_users WHERE id = 1")
+  session_->run_query("SELECT * FROM cjj365_users WHERE id = 1")
       .then([&](auto state) {
         // Test case: No rows
         DEBUG_PRINT("[debug] 1");
@@ -250,7 +210,7 @@ TEST(MonadMysqlTest, maybe_one_row) {
       })
       .then([&](auto) {
         DEBUG_PRINT("[debug] 2");
-        return session->run_query(
+        return session_->run_query(
             "INSERT INTO cjj365_users (name, email, password, roles, state) "
             "VALUES ('jianglibo', 'jianglibo@hotmail.com', 'password123', "
             "JSON_ARRAY('user', 'admin', 'notallowed'), 'active');");
@@ -258,7 +218,7 @@ TEST(MonadMysqlTest, maybe_one_row) {
       .then([&](auto state) {
         DEBUG_PRINT("[debug] 3");
         EXPECT_FALSE(state.has_error());
-        return session->run_query("SELECT id FROM cjj365_users WHERE id = 1");
+        return session_->run_query("SELECT id FROM cjj365_users WHERE id = 1");
       })
       .then([&](auto state) {
         // Test case: One row
@@ -275,7 +235,7 @@ TEST(MonadMysqlTest, maybe_one_row) {
       })
       .then([&](auto) {
         DEBUG_PRINT("[debug] 5");
-        return session->run_query(
+        return session_->run_query(
             "INSERT INTO cjj365_users (name, email, password, roles) "
             "VALUES ('testuser2', 'test2@test.com', 'password', "
             "JSON_ARRAY('user'));");
@@ -283,7 +243,7 @@ TEST(MonadMysqlTest, maybe_one_row) {
       .then([&](auto state) {
         DEBUG_PRINT("[debug] 6");
         EXPECT_FALSE(state.has_error()) << state.diagnostics();
-        return session->run_query("SELECT * FROM cjj365_users");
+        return session_->run_query("SELECT * FROM cjj365_users");
       })
       .then([&](auto state) {
         // Test case: Multiple rows
@@ -295,7 +255,7 @@ TEST(MonadMysqlTest, maybe_one_row) {
       })
       .then([&](auto) {
         DEBUG_PRINT("[debug] 8");
-        return session->run_query(
+        return session_->run_query(
             "SELECT name, NULL as email FROM cjj365_users WHERE id = 1");
       })
       .then([&](auto state) {
@@ -312,9 +272,8 @@ TEST(MonadMysqlTest, maybe_one_row) {
           std::cerr << "Final error: " << r.error() << std::endl;
         }
         EXPECT_TRUE(r.is_ok());
-        notifier.notify();
+        notifyCompletion();
       });
 
-  notifier.waitForNotification();
-  auto& ioc_manager = injector.create<cjj365::IoContextManager&>();
+  waitForCompletion();
 }

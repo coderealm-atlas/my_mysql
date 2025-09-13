@@ -171,3 +171,4 @@ add_compile_definitions(BUFFERSIZE=2048)
 
 find_package(OpenSSL REQUIRED)
 add_subdirectory(tests)
+add_subdirectory(bm)

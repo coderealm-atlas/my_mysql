@@ -62,3 +62,5 @@ config_dir/*
 # Database migrations and schema files (may contain sensitive data)
 db/migrations/
 db/schema.sql
+.env_test
+.env_prod
