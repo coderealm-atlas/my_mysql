@@ -28,8 +28,8 @@ target_sources(sakila_benchmark PRIVATE ${HTTP_CLIENT_SOURCES})
 
 target_include_directories(sakila_benchmark
     PRIVATE ../include
-    PRIVATE ../tests/include
     PRIVATE ../http_client/include
+    PRIVATE ../tests/include # for common_macros.hpp and test helpers
     PRIVATE ../http_client/src
 )
 

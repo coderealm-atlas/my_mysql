@@ -50,9 +50,9 @@ add_executable(${T_NAME}
 )
 target_include_directories(${T_NAME}
     PUBLIC ${CMAKE_SOURCE_DIR}/include
-    PRIVATE ./include
-    PRIVATE ${CMAKE_SOURCE_DIR}/http_client/include
+    PRIVATE ${CMAKE_SOURCE_DIR}/http_client/include # prefer submodule headers
     PRIVATE ${CMAKE_SOURCE_DIR}/http_client/src
+    PRIVATE ./include # only test-specific helpers (common_macros.hpp, tutil.hpp, pch.hpp, client_pool_ssl.hpp)
 )
 
 target_link_libraries(
@@ -90,9 +90,9 @@ add_executable(${SAKILA_T_NAME}
 )
 target_include_directories(${SAKILA_T_NAME}
     PUBLIC ${CMAKE_SOURCE_DIR}/include
-    PRIVATE ./include
-    PRIVATE ${CMAKE_SOURCE_DIR}/http_client/include
+    PRIVATE ${CMAKE_SOURCE_DIR}/http_client/include # prefer submodule headers
     PRIVATE ${CMAKE_SOURCE_DIR}/http_client/src
+    PRIVATE ./include # only test-specific helpers (common_macros.hpp, tutil.hpp, pch.hpp, client_pool_ssl.hpp)
 )
 
 target_link_libraries(
