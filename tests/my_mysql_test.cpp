@@ -326,7 +326,7 @@ TEST_F(MonadMysqlTest, insert_verify_clean) {
       })
       .then([](auto state) {
         // First result set: insert
-        auto insert_res = state.expect_affected_rows("Expect affected rows", 1);
+        auto insert_res = state.expect_affected_rows("Expect affected rows", 0);
         // Second result set: id
         auto id_res = state.template expect_one_value<int64_t>(
             "Expect id of insert", 1, 0);

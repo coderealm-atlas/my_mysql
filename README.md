@@ -70,15 +70,15 @@ TEST_F(MonadMysqlTest, insert_verify_clean) {
       })
       .then([](auto state) {
         // First result set: insert
-        auto insert_res = state.expect_affected_rows("Expect affected rows", 1);
+        auto insert_res = state.expect_affected_rows("query affected rows failed.", 0);
         // Second result set: id
         auto id_res = state.template expect_one_value<int64_t>(
-            "Expect id of insert", 1, 0);
+            "Expect id of insert failed.", 1, 0);
         // Third result set: count
-        auto count_res = state.expect_count("Expect one row with count", 2);
+        auto count_res = state.expect_count("Expect one row with count failed.", 2);
         // Fourth result set: delete
         auto del_res =
-            state.expect_affected_one_row("Expect one row deleted", 3);
+            state.expect_affected_one_row("Expect one row deleted failed.", 3);
         return monad::IO<RetTuple>::from_result(
             zip_results_skip_void(insert_res, id_res, count_res, del_res));
       })
