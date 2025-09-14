@@ -109,7 +109,8 @@ class MonadicMysqlSession
                          } else {
                            state.conn = std::move(conn);
                          }
-                         cb(std::move(state));
+                         cb(IO<MysqlSessionState>::IOResult::Ok(
+                             std::move(state)));
                        })));
     });
   }
@@ -124,7 +125,8 @@ class MonadicMysqlSession
               sql, state_ptr->results, state_ptr->diag,
               [cb = std::move(cb), state_ptr](mysql::error_code ec) mutable {
                 state_ptr->error = ec;
-                cb(std::move(*state_ptr));  // move the object back out
+                cb(IO<MysqlSessionState>::IOResult::Ok(
+                    std::move(*state_ptr)));  // move the object back out
               });
         });
   }

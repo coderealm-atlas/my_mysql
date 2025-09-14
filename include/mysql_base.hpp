@@ -196,6 +196,98 @@ struct MysqlSessionState {
   expect_all_list_of_rows(const std::string& message, int rows_result_index) {
     return expect_list_of_rows(message, rows_result_index, rows_result_index);
   }
+
+  monad::MyResult<int64_t> expect_count(const std::string& message,
+                                        int result_index,
+                                        int count_column_index = 0) {
+    return expect_one_value<int64_t>(message, result_index,
+                                     count_column_index);
+  }
+
+  template <typename T>
+  monad::MyResult<T> expect_one_value(const std::string& message,
+                                      int result_index,
+                                      int column_index = 0) {
+    using monad::MyResult;
+    if (has_error()) {
+      return MyResult<T>::Err(
+          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+    }
+    if (results.size() <= result_index) {
+      return MyResult<T>::Err(
+          monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
+    }
+    const auto& rs = results[result_index];
+    if (rs.rows().empty()) {
+      return MyResult<T>::Err(
+          monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
+    }
+    const auto& row0 = rs.rows()[0];
+    if (row0.size() <= column_index) {
+      return MyResult<T>::Err(
+          monad::Error{db_errors::SQL_EXEC::INDEX_OUT_OF_BOUNDS, message});
+    }
+    auto fv = row0.at(column_index);
+    if (fv.is_null()) {
+      return MyResult<T>::Err(
+          monad::Error{db_errors::SQL_EXEC::NULL_ID, message});
+    }
+
+    // Type conversion based on T
+    if constexpr (std::is_same_v<T, int64_t>) {
+      if (fv.kind() == mysql::field_kind::int64) {
+        return MyResult<int64_t>::Ok(fv.as_int64());
+      } else if (fv.kind() == mysql::field_kind::uint64) {
+        return MyResult<int64_t>::Ok(static_cast<int64_t>(fv.as_uint64()));
+      }
+      return MyResult<T>::Err(
+          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                       message + ": expecting int64_t"});
+    } else if constexpr (std::is_same_v<T, uint64_t>) {
+      if (fv.kind() == mysql::field_kind::uint64) {
+        return MyResult<uint64_t>::Ok(fv.as_uint64());
+      } else if (fv.kind() == mysql::field_kind::int64) {
+        auto v = fv.as_int64();
+        if (v < 0) {
+          return MyResult<T>::Err(
+              monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                           message + ": negative to uint64_t"});
+        }
+        return MyResult<uint64_t>::Ok(static_cast<uint64_t>(v));
+      }
+      return MyResult<T>::Err(
+          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                       message + ": expecting uint64_t"});
+    } else if constexpr (std::is_same_v<T, double>) {
+      if (fv.kind() == mysql::field_kind::double_) {
+        return MyResult<double>::Ok(fv.as_double());
+      }
+      return MyResult<T>::Err(
+          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                       message + ": expecting double"});
+    } else if constexpr (std::is_same_v<T, bool>) {
+      if (fv.kind() == mysql::field_kind::int64) {
+        return MyResult<bool>::Ok(fv.as_int64() != 0);
+      } else if (fv.kind() == mysql::field_kind::uint64) {
+        return MyResult<bool>::Ok(fv.as_uint64() != 0);
+      }
+      return MyResult<T>::Err(
+          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                       message + ": expecting bool (tinyint)"});
+    } else if constexpr (std::is_same_v<T, std::string>) {
+      if (fv.kind() == mysql::field_kind::string) {
+        return MyResult<std::string>::Ok(std::string(fv.as_string()));
+      }
+      return MyResult<T>::Err(
+          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                       message + ": expecting string"});
+    } else {
+      // Unsupported type
+      return MyResult<T>::Err(
+          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                       message + ": unsupported target type"});
+    }
+  }
 };
 
 inline mysql::pool_params params(const MysqlConfig& config) {

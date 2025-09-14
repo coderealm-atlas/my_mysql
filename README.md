@@ -19,83 +19,80 @@ This is **not a library** - it's a demonstration project showing how to use mona
 ```cpp
 #include "mysql_monad.hpp"
 
-// Create a session (injected via dependency injection)
-auto session = session_factory_();
 
-// Simple SELECT query
-session->run_query("SELECT COUNT(*) FROM film")
-    .then([](auto state) {
-        if (state.has_error()) {
-            std::cerr << "Query failed: " << state.error_message() << std::endl;
-            return IO<MysqlSessionState>::pure(std::move(state));
-        }
-        
-        auto result = state.expect_one_row("Expected film count", 0, 0);
-        if (result.is_ok()) {
-            auto count = result.value().at(0).as_int64();
-            std::cout << "Film count: " << count << std::endl;
-        }
-        
-        return IO<MysqlSessionState>::pure(std::move(state));
-    })
-    .run([](auto result) {
-        std::cout << "Query completed" << std::endl;
-    });
+TEST_F(MonadMysqlTest, expect_count) {
+  using namespace monad;
+  std::optional<MyResult<std::tuple<int64_t, int64_t>>> result_opt;
+  return session_
+      ->run_query([](mysql::pooled_connection& conn) {
+        mysql::format_context ctx(conn->format_opts().value());
+        mysql::format_sql_to(ctx, "SELECT COUNT(*) FROM film;");
+        mysql::format_sql_to(ctx, "SELECT COUNT(*) FROM country;");
+        return StringResult::Ok(std::move(ctx).get().value());
+      })
+      .then([](auto state) {
+        // First result set: film count
+        return IO<std::tuple<int64_t, int64_t>>::from_result(
+            zip_results(state.expect_count("film count", 0),
+                        state.expect_count("country count", 1)));
+      })
+      .run([&](auto r) {
+        result_opt = std::move(r);
+        notifyCompletion();
+      });
+  waitForCompletion();
+  EXPECT_FALSE(result_opt->is_err()) << result_opt->error();
+}
 ```
 
 ### Chained Operations
 
 ```cpp
 // Insert, verify, and cleanup in a chain
-session->run_query("INSERT INTO country (country, last_update) VALUES ('Test Country', NOW())")
-    .then([&](auto state) {
-        if (state.has_error()) {
-            return IO<MysqlSessionState>::error(std::move(state));
-        }
-        // Verify insertion
-        return session->run_query("SELECT COUNT(*) FROM country WHERE country = 'Test Country'");
-    })
-    .then([&](auto state) {
-        auto result = state.expect_one_row("Expected count", 0, 0);
-        auto count = result.value().at(0).as_int64();
-        std::cout << "Inserted records: " << count << std::endl;
-        
-        // Cleanup
-        return session->run_query("DELETE FROM country WHERE country = 'Test Country'");
-    })
-    .run([](auto result) {
-        std::cout << "Operation chain completed" << std::endl;
-    });
-```
-
-### Complex JOIN Query
-
-```cpp
-session->run_query(R"(
-    SELECT f.title, c.name as category, l.name as language 
-    FROM film f 
-    JOIN film_category fc ON f.film_id = fc.film_id 
-    JOIN category c ON fc.category_id = c.category_id 
-    JOIN language l ON f.language_id = l.language_id 
-    LIMIT 10
-)")
-    .then([](auto state) {
-        if (state.has_error()) {
-            std::cerr << "Join query failed" << std::endl;
-            return IO<MysqlSessionState>::pure(std::move(state));
-        }
-        
-        for (const auto& row : state.results.rows()) {
-            std::cout << "Film: " << row.at(0).as_string() 
-                      << " | Category: " << row.at(1).as_string()
-                      << " | Language: " << row.at(2).as_string() << std::endl;
-        }
-        
-        return IO<MysqlSessionState>::pure(std::move(state));
-    })
-    .run([](auto result) {
-        std::cout << "Join query completed" << std::endl;
-    });
+TEST_F(MonadMysqlTest, insert_verify_clean) {
+  using namespace monad;
+  using RetTuple = std::tuple<uint64_t, int64_t, int64_t>;
+  std::string cname = "Test Country";
+  std::optional<MyResult<RetTuple>> result_opt;
+  return session_
+      ->run_query([cname](mysql::pooled_connection& conn) {
+        mysql::format_context ctx(conn->format_opts().value());
+        mysql::format_sql_to(
+            ctx,
+            "INSERT INTO country (country, last_update) VALUES ({}, NOW());",
+            cname);
+        mysql::format_sql_to(ctx, "SELECT LAST_INSERT_ID();");
+        mysql::format_sql_to(
+            ctx, "SELECT COUNT(*) FROM country WHERE country = {};", cname);
+        mysql::format_sql_to(ctx, "DELETE FROM country WHERE country = {};",
+                             cname);
+        return StringResult::Ok(std::move(ctx).get().value());
+      })
+      .then([](auto state) {
+        // First result set: insert
+        auto insert_res = state.expect_affected_rows("Expect affected rows", 1);
+        // Second result set: id
+        auto id_res = state.template expect_one_value<int64_t>(
+            "Expect id of insert", 1, 0);
+        // Third result set: count
+        auto count_res = state.expect_count("Expect one row with count", 2);
+        // Fourth result set: delete
+        auto del_res =
+            state.expect_affected_one_row("Expect one row deleted", 3);
+        return monad::IO<RetTuple>::from_result(
+            zip_results_skip_void(insert_res, id_res, count_res, del_res));
+      })
+      .run([&](auto result) {
+        result_opt = std::move(result);
+        notifyCompletion();
+      });
+  waitForCompletion();
+  EXPECT_FALSE(result_opt->is_err()) << result_opt->error();
+  auto [insert_row, id, count] = result_opt->value();
+  ASSERT_EQ(insert_row, 1);
+  ASSERT_EQ(count, 1);
+  ASSERT_GT(id, 0);
+}
 ```
 
 ## Building
