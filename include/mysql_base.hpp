@@ -42,7 +42,34 @@ inline uint64_t epoch_milliseconds(boost::mysql::field_view f) {
 }
 
 struct MysqlSessionState {
-  boost::mysql::pooled_connection conn;
+  struct TrackedPooledConn {
+    mysql::pooled_connection inner;
+    TrackedPooledConn() = default;
+    TrackedPooledConn(mysql::pooled_connection&& pc) : inner(std::move(pc)) {}
+    TrackedPooledConn(TrackedPooledConn&& o) noexcept
+        : inner(std::move(o.inner)) {}
+    TrackedPooledConn& operator=(TrackedPooledConn&& o) noexcept {
+      inner = std::move(o.inner);
+      return *this;
+    }
+    TrackedPooledConn(const TrackedPooledConn&) = delete;
+    TrackedPooledConn& operator=(const TrackedPooledConn&) = delete;
+    ~TrackedPooledConn() {
+#ifdef BB_MYSQL_VERBOSE
+      if (inner.valid()) {
+        std::cerr
+            << "[instrument][TrackedPooledConn] releasing pooled_connection"
+            << std::endl;
+      }
+#endif
+    }
+    bool valid() const { return inner.valid(); }
+    mysql::pooled_connection& get() { return inner; }
+    mysql::pooled_connection* operator->() { return &inner; }
+    const mysql::pooled_connection* operator->() const { return &inner; }
+    mysql::pooled_connection&& move_out() { return std::move(inner); }
+  };
+  TrackedPooledConn conn;
   boost::mysql::results results;
   boost::mysql::error_code error;
   boost::mysql::diagnostics diag;
@@ -71,6 +98,13 @@ struct MysqlSessionState {
   // Prevent copying
   MysqlSessionState(const MysqlSessionState&) = delete;
   MysqlSessionState& operator=(const MysqlSessionState&) = delete;
+
+  ~MysqlSessionState() {
+#ifdef BB_MYSQL_VERBOSE
+    std::cerr << "[instrument] MysqlSessionState dtor conn.valid="
+              << (conn.valid() ? 1 : 0) << std::endl;
+#endif
+  }
 
   bool has_error() const { return static_cast<bool>(error); }
   std::string error_message() const { return error.message(); }
@@ -200,14 +234,12 @@ struct MysqlSessionState {
   monad::MyResult<int64_t> expect_count(const std::string& message,
                                         int result_index,
                                         int count_column_index = 0) {
-    return expect_one_value<int64_t>(message, result_index,
-                                     count_column_index);
+    return expect_one_value<int64_t>(message, result_index, count_column_index);
   }
 
   template <typename T>
   monad::MyResult<T> expect_one_value(const std::string& message,
-                                      int result_index,
-                                      int column_index = 0) {
+                                      int result_index, int column_index = 0) {
     using monad::MyResult;
     if (has_error()) {
       return MyResult<T>::Err(
@@ -240,9 +272,8 @@ struct MysqlSessionState {
       } else if (fv.kind() == mysql::field_kind::uint64) {
         return MyResult<int64_t>::Ok(static_cast<int64_t>(fv.as_uint64()));
       }
-      return MyResult<T>::Err(
-          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
-                       message + ": expecting int64_t"});
+      return MyResult<T>::Err(monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                                           message + ": expecting int64_t"});
     } else if constexpr (std::is_same_v<T, uint64_t>) {
       if (fv.kind() == mysql::field_kind::uint64) {
         return MyResult<uint64_t>::Ok(fv.as_uint64());
@@ -255,16 +286,14 @@ struct MysqlSessionState {
         }
         return MyResult<uint64_t>::Ok(static_cast<uint64_t>(v));
       }
-      return MyResult<T>::Err(
-          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
-                       message + ": expecting uint64_t"});
+      return MyResult<T>::Err(monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                                           message + ": expecting uint64_t"});
     } else if constexpr (std::is_same_v<T, double>) {
       if (fv.kind() == mysql::field_kind::double_) {
         return MyResult<double>::Ok(fv.as_double());
       }
-      return MyResult<T>::Err(
-          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
-                       message + ": expecting double"});
+      return MyResult<T>::Err(monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                                           message + ": expecting double"});
     } else if constexpr (std::is_same_v<T, bool>) {
       if (fv.kind() == mysql::field_kind::int64) {
         return MyResult<bool>::Ok(fv.as_int64() != 0);
@@ -278,9 +307,8 @@ struct MysqlSessionState {
       if (fv.kind() == mysql::field_kind::string) {
         return MyResult<std::string>::Ok(std::string(fv.as_string()));
       }
-      return MyResult<T>::Err(
-          monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
-                       message + ": expecting string"});
+      return MyResult<T>::Err(monad::Error{db_errors::PARSE::BAD_VALUE_ACCESS,
+                                           message + ": expecting string"});
     } else {
       // Unsupported type
       return MyResult<T>::Err(
@@ -332,6 +360,19 @@ inline mysql::pool_params params(const MysqlConfig& config) {
   params.database = config.database;
   params.thread_safe = config.thread_safe;
   params.multi_queries = config.multi_queries;
+  // Explicitly set pool sizes for diagnostics
+  // Set to 0 to avoid possible race during eager opening while diagnosing stall
+  params.initial_size = config.initial_size;  // open on-demand
+  params.max_size = config.max_size;          // allow up to 16
+  // Instrument pool params
+  std::cerr << "[instrument][pool_params] host="
+            << (config.unix_socket.empty() ? config.host.c_str()
+                                           : config.unix_socket.c_str())
+            << " port=" << config.port << " db=" << config.database
+            << " thread_safe=" << (params.thread_safe ? 1 : 0)
+            << " multi_queries=" << (params.multi_queries ? 1 : 0)
+            << " initial_size=" << params.initial_size
+            << " max_size=" << params.max_size << std::endl;
   return params;
 }
 
@@ -357,9 +398,10 @@ inline mysql::pool_params params(const MysqlConfig& config) {
 // };
 
 struct MysqlPoolWrapper {
-  MysqlPoolWrapper(cjj365::IoContextManager& ioc_manager,
+  MysqlPoolWrapper(cjj365::IIoContextManager& ioc_manager,
                    IMysqlConfigProvider& mysql_config_provider)
       : pool_(ioc_manager.ioc(), params(mysql_config_provider.get())) {
+    active_conns_.store(0);
     // Attach an error-reporting completion handler instead of asio::detached so
     // we don't silently swallow errors.
     pool_.async_run([this](const boost::system::error_code& ec) {
@@ -369,6 +411,21 @@ struct MysqlPoolWrapper {
         DEBUG_PRINT("[MysqlPoolWrapper] async_run exited cleanly.");
       }
     });
+#ifdef BB_MYSQL_VERBOSE
+    // Heartbeat to verify executor alive
+    auto hb_timer = std::make_shared<asio::steady_timer>(pool_.get_executor());
+    auto hb_fn = std::make_shared<std::function<void(int)>>();
+    *hb_fn = [hb_timer, hb_fn](int iter) {
+      hb_timer->expires_after(std::chrono::seconds(2));
+      hb_timer->async_wait([hb_timer, hb_fn,
+                            iter](const boost::system::error_code& ec) {
+        if (ec) return;  // cancelled
+        std::cerr << "[instrument][pool_heartbeat] iter=" << iter << std::endl;
+        (*hb_fn)(iter + 1);
+      });
+    };
+    (*hb_fn)(1);
+#endif
     DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
   }
 
@@ -395,9 +452,19 @@ struct MysqlPoolWrapper {
 
   mysql::connection_pool& get() { return pool_; }
   const mysql::connection_pool& get() const { return pool_; }
+  void inc_active() {
+    auto v = active_conns_.fetch_add(1) + 1;
+    std::cerr << "[instrument][active_conns] + now=" << v << std::endl;
+  }
+  void dec_active() {
+    auto v = active_conns_.fetch_sub(1) - 1;
+    std::cerr << "[instrument][active_conns] - now=" << v << std::endl;
+  }
+  int active() const { return active_conns_.load(); }
 
  private:
   mysql::connection_pool pool_;
   bool stopped_{false};
+  std::atomic<int> active_conns_{0};
 };
 }  // namespace sql
