@@ -225,8 +225,8 @@ class MonadicMysqlSession
     std::cerr << "[instrument] execute_sql start conn_handle_addr="
               << raw_conn_ptr
               << " state_ptr.use_count=" << state_ptr.use_count() << std::endl;
-#endif
     auto preview = sql.substr(0, 100);
+#endif
     return IO<MysqlSessionState>([state_ptr, sql,
                                   self = shared_from_this()](auto cb) {
 #ifdef BB_MYSQL_VERBOSE
@@ -242,6 +242,7 @@ class MonadicMysqlSession
       state_ptr->conn.get()->async_execute(
           sql, state_ptr->results, state_ptr->diag,
           [cb = std::move(cb), state_ptr, self](mysql::error_code ec) mutable {
+            state_ptr->error = ec;
 #ifdef BB_MYSQL_VERBOSE
             const void* raw_conn_ptr_done =
                 state_ptr->conn.valid()
@@ -251,8 +252,6 @@ class MonadicMysqlSession
                       << raw_conn_ptr_done
                       << " state_ptr.use_count=" << state_ptr.use_count()
                       << std::endl;
-#endif
-            state_ptr->error = ec;
             // Only access results metadata if no error; calling size() on a
             // disengaged boost::mysql::results asserts (observed in billing test).
             std::size_t rs_count = 0;
@@ -273,6 +272,7 @@ class MonadicMysqlSession
             if (state_ptr->conn.valid()) {
               self->pool_.dec_active();
             }
+#endif
             cb(IO<MysqlSessionState>::IOResult::Ok(
                 std::move(*state_ptr)));  // move the object back out
           });

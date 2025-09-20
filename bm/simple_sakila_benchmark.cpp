@@ -51,6 +51,7 @@ protected:
           di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
           di::bind<cjj365::ConfigSources>().to(config_sources()),
           di::bind<customio::IOutput>().to(output()),
+      di::bind<cjj365::IIoContextManager>().to<cjj365::IoContextManager>(),
           bind_shared_factory<monad::MonadicMysqlSession>(),
           di::bind<cjj365::IIocConfigProvider>()
               .to<cjj365::IocConfigProviderFile>()));

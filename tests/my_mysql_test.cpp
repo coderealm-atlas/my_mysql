@@ -21,8 +21,44 @@
 
 namespace di = boost::di;
 
+namespace {
+// Singleton helpers used across tests
+cjj365::ConfigSources& test_config_sources() {
+  static cjj365::ConfigSources instance({fs::path{"config_dir"}},
+                                        {"test", "develop"});
+  return instance;
+}
+
+customio::ConsoleOutputWithColor& test_output() {
+  static customio::ConsoleOutputWithColor instance(5);
+  return instance;
+}
+
+}  // namespace
+
+
+static cjj365::IIoContextManager* io_context_manager_holder;
+// Global test environment to run once after all tests in this file
+class MysqlTestGlobalTestEnv : public ::testing::Environment {
+ public:
+  void TearDown() override {
+    // Final cleanup after the whole test suite in this binary
+    std::cerr << "[MysqlTestGlobalTestEnv] Global TearDown completed."
+              << std::endl;
+    if (io_context_manager_holder) {
+      io_context_manager_holder->stop();
+    }
+  }
+};
+
+// Register the global environment
+static const auto* const global_env =
+    ::testing::AddGlobalTestEnvironment(new MysqlTestGlobalTestEnv());
+
 // Test fixture class to reduce duplication
 class MonadMysqlTest : public ::testing::Test {
+  std::shared_ptr<void> injector_holder_;
+
  protected:
   void SetUp() override {
     // Reset database for each test
@@ -32,34 +68,30 @@ class MonadMysqlTest : public ::testing::Test {
         "db/.env_test --migrations-dir db/test_migrations up");
     ASSERT_EQ(rc, 0) << "Failed to reset test database";
 
-    // Create injector
-    injector_ = std::make_unique<decltype(di::make_injector(
+    auto injector = di::make_injector(
+        di::bind<cjj365::ConfigSources>().to(test_config_sources()),
+        di::bind<customio::IOutput>().to(test_output()),
+        di::bind<cjj365::IIoContextManager>().to<cjj365::IoContextManager>(),
         di::bind<sql::IMysqlConfigProvider>()
-            .to<sql::MysqlConfigProviderFile>(),
-        di::bind<cjj365::ConfigSources>().to(config_sources()),
-        di::bind<customio::IOutput>().to(output()),
-        bind_shared_factory<monad::MonadicMysqlSession>(),
+            .to<sql::MysqlConfigProviderFile>()
+            .in(di::singleton),
+        di::bind<sql::MysqlPoolWrapper>().in(di::singleton),
+        di_utils::safe_factory_binding<monad::MonadicMysqlSession,
+                                       sql::MysqlPoolWrapper,
+                                       customio::IOutput>(),
         di::bind<cjj365::IIocConfigProvider>()
-            .to<cjj365::IocConfigProviderFile>()))>(
-        di::make_injector(
-            di::bind<sql::IMysqlConfigProvider>()
-                .to<sql::MysqlConfigProviderFile>(),
-            di::bind<cjj365::ConfigSources>().to(config_sources()),
-            di::bind<customio::IOutput>().to(output()),
-            bind_shared_factory<monad::MonadicMysqlSession>(),
-            di::bind<cjj365::IIocConfigProvider>()
-                .to<cjj365::IocConfigProviderFile>()));
-
+            .to<cjj365::IocConfigProviderFile>());
+    using InjT = decltype(injector);
+    auto real_inj = std::make_shared<InjT>(std::move(injector));
+    // Create injector
+    injector_holder_ = real_inj;
     // Create session factory and session
-    session_factory_ = injector_->create<monad::MonadicMysqlSession::Factory>();
+    session_factory_ = real_inj->create<monad::MonadicMysqlSession::Factory>();
     session_ = session_factory_();
+    io_context_manager_holder = &real_inj->create<cjj365::IIoContextManager&>();
   }
 
-  void TearDown() override {
-    if (injector_) {
-      auto& ioc_manager = injector_->create<cjj365::IoContextManager&>();
-    }
-  }
+  void TearDown() override {}
 
   // Helper method to wait for async operations
   void waitForCompletion() { notifier_.waitForNotification(); }
@@ -68,27 +100,8 @@ class MonadMysqlTest : public ::testing::Test {
   void notifyCompletion() { notifier_.notify(); }
 
   // Static helper functions
-  static cjj365::ConfigSources& config_sources() {
-    static cjj365::ConfigSources instance({fs::path{"config_dir"}},
-                                          {"test", "develop"});
-    return instance;
-  }
-
-  static customio::ConsoleOutputWithColor& output() {
-    static customio::ConsoleOutputWithColor instance(5);
-    return instance;
-  }
-
   // Protected members available to test methods
   misc::ThreadNotifier notifier_;
-  std::unique_ptr<decltype(di::make_injector(
-      di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-      di::bind<cjj365::ConfigSources>().to(config_sources()),
-      di::bind<customio::IOutput>().to(output()),
-      bind_shared_factory<monad::MonadicMysqlSession>(),
-      di::bind<cjj365::IIocConfigProvider>()
-          .to<cjj365::IocConfigProviderFile>()))>
-      injector_;
   monad::MonadicMysqlSession::Factory session_factory_;
   std::shared_ptr<monad::MonadicMysqlSession> session_;
 };
@@ -136,10 +149,10 @@ TEST_F(MonadMysqlTest, only_one_row) {
       })
       .run([&](auto r) {
         EXPECT_TRUE(r.is_ok());
-        notifyCompletion();
+        this->notifyCompletion();
       });
 
-  waitForCompletion();
+  this->waitForCompletion();
 }
 
 TEST_F(MonadMysqlTest, list_row_ok) {
@@ -159,10 +172,10 @@ TEST_F(MonadMysqlTest, list_row_ok) {
       })
       .run([&](auto r) {
         EXPECT_TRUE(r.is_ok());
-        notifyCompletion();
+        this->notifyCompletion();
       });
 
-  waitForCompletion();
+  this->waitForCompletion();
 }
 
 TEST_F(MonadMysqlTest, list_row_out_of_bounds) {
@@ -180,10 +193,10 @@ TEST_F(MonadMysqlTest, list_row_out_of_bounds) {
       })
       .run([&](auto r) {
         EXPECT_FALSE(r.is_err());
-        notifyCompletion();
+        this->notifyCompletion();
       });
 
-  waitForCompletion();
+  this->waitForCompletion();
 }
 
 TEST_F(MonadMysqlTest, sql_failed) {
@@ -193,10 +206,10 @@ TEST_F(MonadMysqlTest, sql_failed) {
     auto rr = r.value().expect_one_row("Expect fail", 0, 0);
     EXPECT_TRUE(rr.is_err());
     EXPECT_EQ(rr.error().code, db_errors::SQL_EXEC::SQL_FAILED);
-    notifyCompletion();
+    this->notifyCompletion();
   });
 
-  waitForCompletion();
+  this->waitForCompletion();
 }
 
 TEST_F(MonadMysqlTest, maybe_one_row) {
@@ -275,16 +288,16 @@ TEST_F(MonadMysqlTest, maybe_one_row) {
           std::cerr << "Final error: " << r.error() << std::endl;
         }
         EXPECT_TRUE(r.is_ok());
-        notifyCompletion();
+        this->notifyCompletion();
       });
 
-  waitForCompletion();
+  this->waitForCompletion();
 }
 
 TEST_F(MonadMysqlTest, expect_count) {
   using namespace monad;
   std::optional<MyResult<std::tuple<int64_t, int64_t>>> result_opt;
-  return session_
+  session_
       ->run_query([](mysql::pooled_connection& conn) {
         mysql::format_context ctx(conn->format_opts().value());
         mysql::format_sql_to(ctx, "SELECT COUNT(*) FROM film;");
@@ -299,9 +312,9 @@ TEST_F(MonadMysqlTest, expect_count) {
       })
       .run([&](auto r) {
         result_opt = std::move(r);
-        notifyCompletion();
+        this->notifyCompletion();
       });
-  waitForCompletion();
+  this->waitForCompletion();
   EXPECT_FALSE(result_opt->is_err()) << result_opt->error();
 }
 
@@ -310,7 +323,7 @@ TEST_F(MonadMysqlTest, insert_verify_clean) {
   using RetTuple = std::tuple<uint64_t, int64_t, int64_t>;
   std::string cname = "Test Country";
   std::optional<MyResult<RetTuple>> result_opt;
-  return session_
+  session_
       ->run_query([cname](mysql::pooled_connection& conn) {
         mysql::format_context ctx(conn->format_opts().value());
         mysql::format_sql_to(
@@ -340,9 +353,9 @@ TEST_F(MonadMysqlTest, insert_verify_clean) {
       })
       .run([&](auto result) {
         result_opt = std::move(result);
-        notifyCompletion();
+        this->notifyCompletion();
       });
-  waitForCompletion();
+  this->waitForCompletion();
   EXPECT_FALSE(result_opt->is_err()) << result_opt->error();
   auto [insert_row, id, count] = result_opt->value();
   ASSERT_EQ(insert_row, 1);

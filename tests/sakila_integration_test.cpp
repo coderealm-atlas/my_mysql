@@ -35,6 +35,8 @@ class SakilaIntegrationTest : public ::testing::Test {
         di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
         di::bind<cjj365::ConfigSources>().to(config_sources()),
         di::bind<customio::IOutput>().to(output()),
+    // Provide IoContextManager implementation for interface to satisfy DI constraints
+    di::bind<cjj365::IIoContextManager>().to<cjj365::IoContextManager>(),
         bind_shared_factory<monad::MonadicMysqlSession>(),
         di::bind<cjj365::IIocConfigProvider>()
             .to<cjj365::IocConfigProviderFile>());

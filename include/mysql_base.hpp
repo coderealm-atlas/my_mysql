@@ -376,27 +376,6 @@ inline mysql::pool_params params(const MysqlConfig& config) {
   return params;
 }
 
-// struct MysqlPoolWrapper {
-//   MysqlPoolWrapper(asio::io_context& ioc,
-//                    IMysqlConfigProvider& mysql_config_provider)
-//       : pool_(ioc, params(mysql_config_provider.get())) {
-//     pool_.async_run(asio::detached);
-//     DEBUG_PRINT("[MysqlPoolWrapper] Constructor called.");
-//   }
-
-//   ~MysqlPoolWrapper() { DEBUG_PRINT("[MysqlPoolWrapper] Destructor called.");
-//   }
-
-//   void stop() {
-//     pool_.cancel();  // ✅ cancel timers
-//   }
-
-//   mysql::connection_pool& get() { return pool_; }
-
-//  private:
-//   mysql::connection_pool pool_;
-// };
-
 struct MysqlPoolWrapper {
   MysqlPoolWrapper(cjj365::IIoContextManager& ioc_manager,
                    IMysqlConfigProvider& mysql_config_provider)
