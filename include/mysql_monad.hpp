@@ -253,11 +253,22 @@ class MonadicMysqlSession
                       << std::endl;
 #endif
             state_ptr->error = ec;
-            // minimal diagnostics for first result set
-            std::size_t rs_count = state_ptr->results.size();
-            if (ec) {
+            // Only access results metadata if no error; calling size() on a
+            // disengaged boost::mysql::results asserts (observed in billing test).
+            std::size_t rs_count = 0;
+            if (!ec) {
+              try {
+                rs_count = state_ptr->results.size();
+              } catch (const std::exception& ex) {
+                self->output_.error()
+                    << "[execute_sql] unexpected exception querying results.size(): "
+                    << ex.what();
+              }
+            } else {
               self->output_.error()
-                  << "[execute_sql] completion error: " << ec.message();
+                  << "[execute_sql] completion error ec=" << ec.value()
+                  << " msg=" << ec.message() << " diag="
+                  << state_ptr->diag.server_message();
             }
             if (state_ptr->conn.valid()) {
               self->pool_.dec_active();
