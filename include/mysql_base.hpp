@@ -124,9 +124,12 @@ struct MysqlSessionState {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
     }
+    // Iterate resultsets; return the first row whose column count is > cols.
     for (const auto& rs : results) {
-      if (rs.rows().size() > cols) {
-        return monad::MyResult<mysql::row_view>::Ok(rs.rows()[0]);
+      if (rs.rows().empty()) continue;  // skip empty sets
+      const auto& row0 = rs.rows()[0];
+      if (static_cast<int>(row0.size()) > cols) {
+        return monad::MyResult<mysql::row_view>::Ok(row0);
       }
     }
 
