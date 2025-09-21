@@ -71,3 +71,4 @@ db/migrations/
 db/schema.sql
 .env_test
 .env_prod
+build-coverage/
