@@ -118,6 +118,22 @@ struct MysqlSessionState {
     return monad::MyVoidResult();
   }
 
+  monad::MyResult<mysql::row_view> expect_one_row_cols_gt(
+      const std::string& message, int cols) {
+    if (has_error()) {
+      return monad::MyResult<mysql::row_view>::Err(
+          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+    }
+    for (const auto& rs : results) {
+      if (rs.rows().size() > cols) {
+        return monad::MyResult<mysql::row_view>::Ok(rs.rows()[0]);
+      }
+    }
+
+    return monad::MyResult<mysql::row_view>::Err(
+        monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
+  }
+
   monad::MyResult<mysql::row_view> expect_one_row(const std::string& message,
                                                   int result_index,
                                                   int id_column_index) {
