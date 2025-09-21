@@ -1,3 +1,10 @@
+# Coverage artifacts
+*.gcov
+*.gcda
+*.gcno
+coverage/
+coverage-report.html
+coverage-report.xml
 TAGS
 *~
 *#*#

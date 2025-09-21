@@ -6,57 +6,39 @@
 
 #include "boost/di.hpp"
 #include "common_macros.hpp"
-#include "io_context_manager.hpp"
 #include "log_stream.hpp"
 #include "misc_util.hpp"
-#include "my_di_extension.hpp"
 #include "mysql_base.hpp"
-#include "mysql_config_provider.hpp"
 #include "mysql_monad.hpp"
 #include "simple_data.hpp"
 #include "tutil.hpp"
+#include "test_injectors.hpp"
+#include "db_resetter.hpp"
 
-namespace di = boost::di;
-namespace fs = std::filesystem;
+namespace fs = std::filesystem; // di alias removed (not directly used here)
+
+// Using shared injector builders from test_injectors namespace
 
 // Test fixture for Sakila integration testing
 class SakilaIntegrationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    // Reset database and apply both simple schema and Sakila schema
-    int rc = std::system(
-        "dbmate --env-file db/.env_test --migrations-dir db/test_migrations "
-        "drop && dbmate --env-file "
-        "db/.env_test --migrations-dir db/test_migrations up");
-    ASSERT_EQ(rc, 0) << "Failed to reset test database with Sakila schema";
+    // Reset database and apply schema
+    DbResetter resetter; // uses env overrides if provided
+    ASSERT_EQ(resetter.rc(), 0) << "Failed to reset test database with Sakila schema. Command: " << resetter.command();
 
-    // Create injector and factory
-    auto injector = di::make_injector(
-        di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>(),
-        di::bind<cjj365::ConfigSources>().to(config_sources()),
-        di::bind<customio::IOutput>().to(output()),
-    // Provide IoContextManager implementation for interface to satisfy DI constraints
-    di::bind<cjj365::IIoContextManager>().to<cjj365::IoContextManager>(),
-        bind_shared_factory<monad::MonadicMysqlSession>(),
-        di::bind<cjj365::IIocConfigProvider>()
-            .to<cjj365::IocConfigProviderFile>());
-
-    // Get the factory before storing in void*
-    session_factory_ = injector.create<monad::MonadicMysqlSession::Factory>();
-    
-    // Store the injector in void* with a proper deleter
-    injector_ = std::unique_ptr<void, std::function<void(void*)>>(
-        new auto(std::move(injector)),
-        [](void* ptr) { delete static_cast<std::remove_reference_t<decltype(injector)>*>(ptr); }
-    );
-    
+  using Injector = decltype(test_injectors::build_integration_test_injector());
+  injector_ = std::make_unique<Injector>(test_injectors::build_integration_test_injector());
+  session_factory_ = injector_->create<monad::MonadicMysqlSession::Factory>();
     // Test that we can create a session (but don't store it - create fresh ones per test)
     auto test_session = session_factory_();
     ASSERT_TRUE(test_session) << "Failed to create MySQL session factory";
   }
 
   void TearDown() override {
-    // No need to clean up individual sessions - they're created per test
+    // Assert no leaked sessions across integration tests
+    ASSERT_EQ(monad::MonadicMysqlSession::instance_count.load(), 0)
+        << "Leaked MonadicMysqlSession instances after integration test";
   }
 
   // Notification helpers for async tests
@@ -82,7 +64,7 @@ class SakilaIntegrationTest : public ::testing::Test {
 
  protected:
   misc::ThreadNotifier notifier_;
-  std::unique_ptr<void, std::function<void(void*)>> injector_;
+  std::unique_ptr<decltype(test_injectors::build_integration_test_injector())> injector_;
   monad::MonadicMysqlSession::Factory session_factory_;
   
   // Helper method to create a fresh session for each test

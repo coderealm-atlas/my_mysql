@@ -4,37 +4,20 @@
 #include <cstdint>
 #include <filesystem>
 #include <tuple>
-#include <variant>
 
 #include "boost/di.hpp"
 #include "common_macros.hpp"
 #include "io_context_manager.hpp"
-#include "log_stream.hpp"
 #include "misc_util.hpp"
-#include "my_di_extension.hpp"
-#include "mysql_base.hpp"
-#include "mysql_config_provider.hpp"
 #include "mysql_monad.hpp"
 #include "result_monad.hpp"
-#include "simple_data.hpp"
 #include "tutil.hpp"  // IWYU pragma: keep
+#include "test_injectors.hpp"
+#include "db_resetter.hpp"
 
-namespace di = boost::di;
+// (Removed unused namespace alias and header to satisfy linter)
 
-namespace {
-// Singleton helpers used across tests
-cjj365::ConfigSources& test_config_sources() {
-  static cjj365::ConfigSources instance({fs::path{"config_dir"}},
-                                        {"test", "develop"});
-  return instance;
-}
-
-customio::ConsoleOutputWithColor& test_output() {
-  static customio::ConsoleOutputWithColor instance(5);
-  return instance;
-}
-
-}  // namespace
+// Using shared helpers from test_injectors namespace now
 
 
 static cjj365::IIoContextManager* io_context_manager_holder;
@@ -57,41 +40,28 @@ static const auto* const global_env =
 
 // Test fixture class to reduce duplication
 class MonadMysqlTest : public ::testing::Test {
-  std::shared_ptr<void> injector_holder_;
+  using Injector = decltype(test_injectors::build_unit_test_injector());
+  std::unique_ptr<Injector> injector_;
 
  protected:
   void SetUp() override {
-    // Reset database for each test
-    int rc = std::system(
-        "dbmate --env-file db/.env_test --migrations-dir db/test_migrations "
-        "drop && dbmate --env-file "
-        "db/.env_test --migrations-dir db/test_migrations up");
-    ASSERT_EQ(rc, 0) << "Failed to reset test database";
+    // Reset database for each test via RAII helper
+    DbResetter resetter;
+    ASSERT_EQ(resetter.rc(), 0) << "Failed to reset test database. Command: " << resetter.command();
 
-    auto injector = di::make_injector(
-        di::bind<cjj365::ConfigSources>().to(test_config_sources()),
-        di::bind<customio::IOutput>().to(test_output()),
-        di::bind<cjj365::IIoContextManager>().to<cjj365::IoContextManager>(),
-        di::bind<sql::IMysqlConfigProvider>()
-            .to<sql::MysqlConfigProviderFile>()
-            .in(di::singleton),
-        di::bind<sql::MysqlPoolWrapper>().in(di::singleton),
-        di_utils::safe_factory_binding<monad::MonadicMysqlSession,
-                                       sql::MysqlPoolWrapper,
-                                       customio::IOutput>(),
-        di::bind<cjj365::IIocConfigProvider>()
-            .to<cjj365::IocConfigProviderFile>());
-    using InjT = decltype(injector);
-    auto real_inj = std::make_shared<InjT>(std::move(injector));
-    // Create injector
-    injector_holder_ = real_inj;
-    // Create session factory and session
-    session_factory_ = real_inj->create<monad::MonadicMysqlSession::Factory>();
+  injector_ = std::make_unique<Injector>(test_injectors::build_unit_test_injector());
+    session_factory_ = injector_->create<monad::MonadicMysqlSession::Factory>();
     session_ = session_factory_();
-    io_context_manager_holder = &real_inj->create<cjj365::IIoContextManager&>();
+    io_context_manager_holder = &injector_->create<cjj365::IIoContextManager&>();
   }
 
-  void TearDown() override {}
+  void TearDown() override {
+    // Release session before leak assertion
+    session_.reset();
+    // Assert no leaked sessions
+    ASSERT_EQ(monad::MonadicMysqlSession::instance_count.load(), 0)
+        << "Leaked MonadicMysqlSession instances at test end";
+  }
 
   // Helper method to wait for async operations
   void waitForCompletion() { notifier_.waitForNotification(); }
@@ -99,8 +69,6 @@ class MonadMysqlTest : public ::testing::Test {
   // Helper method to notify completion
   void notifyCompletion() { notifier_.notify(); }
 
-  // Static helper functions
-  // Protected members available to test methods
   misc::ThreadNotifier notifier_;
   monad::MonadicMysqlSession::Factory session_factory_;
   std::shared_ptr<monad::MonadicMysqlSession> session_;

@@ -10,11 +10,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project(my_mysql LANGUAGES CXX)
 
-# Set Clang and LLD as default compilers
-if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+# -----------------------------------------------------------------------------
+# Toolchain / compiler selection
+# Add an option to force clang; allow turning it off for e.g. GCC coverage builds
+# -----------------------------------------------------------------------------
+option(FORCE_CLANG "Force use of clang/clang++ compilers (was previously default)" ON)
+if(FORCE_CLANG AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(STATUS "FORCE_CLANG=ON: switching compiler to clang/clang++")
     set(CMAKE_C_COMPILER "clang")
     set(CMAKE_CXX_COMPILER "clang++")
-    set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=lld")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
+else()
+    if(NOT FORCE_CLANG)
+        message(STATUS "FORCE_CLANG=OFF: respecting pre-configured compiler (${CMAKE_CXX_COMPILER_ID})")
+    endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -93,8 +102,14 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_definitions(-DDEBUG_BUILD)
-    set(CMAKE_CXX_FLAGS_DEBUG "-O1 -gline-tables-only")
-    set(CMAKE_C_FLAGS_DEBUG "-O1 -gline-tables-only")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(CMAKE_CXX_FLAGS_DEBUG "-O1 -gline-tables-only")
+        set(CMAKE_C_FLAGS_DEBUG "-O1 -gline-tables-only")
+    else()
+        # GCC or other: use standard debug info suitable for coverage
+        set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
+        set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
+    endif()
     option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
     
     # Additional debug flags for Clang
@@ -112,6 +127,20 @@ else()
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -flto=thin -DNDEBUG")
     set(CMAKE_C_FLAGS_RELEASE "-O3 -flto=thin -DNDEBUG")
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-fuse-ld=lld")
+endif()
+
+# -----------------------------------------------------------------------------
+# Coverage instrumentation (GCC / gcov). Enable with -DENABLE_COVERAGE=ON
+# When using coverage, recommended to disable FORCE_CLANG so GCC is used.
+# -----------------------------------------------------------------------------
+option(ENABLE_COVERAGE "Enable code coverage instrumentation (GCC)" OFF)
+if(ENABLE_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        message(WARNING "ENABLE_COVERAGE is ON but compiler is ${CMAKE_CXX_COMPILER_ID}. For gcov style coverage, configure with -DFORCE_CLANG=OFF so GCC is used.")
+    endif()
+    message(STATUS "Coverage instrumentation enabled (--coverage)")
+    add_compile_options(--coverage -O0 -g)
+    add_link_options(--coverage)
 endif()
 
 message(STATUS "Current debug flags: ${CMAKE_CXX_FLAGS_DEBUG}")
@@ -172,3 +201,45 @@ add_compile_definitions(BUFFERSIZE=2048)
 find_package(OpenSSL REQUIRED)
 add_subdirectory(tests)
 add_subdirectory(bm)
+
+# -----------------------------------------------------------------------------
+# Coverage reporting target (requires gcovr if ENABLE_COVERAGE was used)
+# Usage:
+#   cmake -S . -B build-coverage -DENABLE_COVERAGE=ON -DFORCE_CLANG=OFF ...
+#   cmake --build build-coverage -j
+#   cmake --build build-coverage --target coverage
+# Outputs HTML + XML into build-coverage/coverage/
+# -----------------------------------------------------------------------------
+find_program(GCOVR_EXECUTABLE gcovr)
+if(GCOVR_EXECUTABLE)
+    add_custom_target(coverage
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
+        COMMAND ${GCOVR_EXECUTABLE}
+            -r ${CMAKE_SOURCE_DIR}
+            --exclude '.*vcpkg_installed/.*'
+            --exclude '.*build-.*'
+            --exclude '.*/tests/.*'
+            --filter '${CMAKE_SOURCE_DIR}/include'
+            --html --html-details -o ${CMAKE_BINARY_DIR}/coverage/index.html
+            --xml -o ${CMAKE_BINARY_DIR}/coverage/coverage.xml
+            --txt -o ${CMAKE_BINARY_DIR}/coverage/summary.txt
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMENT "Generating gcovr coverage report (HTML/XML/TXT)"
+        VERBATIM)
+
+    # -----------------------------------------------------------------
+    # coverage_full: invokes scripts/run_coverage.sh for end-to-end
+    # configuration (if needed), build, test, and report generation.
+    # This provides a single entry point for CI or local use:
+    #   cmake --build build-coverage --target coverage_full -- -j
+    # Note: Script itself reconfigures only if missing or --reconfigure passed.
+    # -----------------------------------------------------------------
+    add_custom_target(coverage_full
+        COMMAND ${CMAKE_COMMAND} -E echo "[coverage_full] Running scripts/run_coverage.sh"
+        COMMAND ${CMAKE_COMMAND} -E env PROJECT_ROOT=${CMAKE_SOURCE_DIR} bash ${CMAKE_SOURCE_DIR}/scripts/run_coverage.sh
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Run full coverage pipeline (configure/build/test/report)"
+        VERBATIM)
+else()
+    message(STATUS "gcovr not found: 'coverage' target will be unavailable")
+endif()
