@@ -116,7 +116,12 @@ class MonadicMysqlSession
           if (sql.is_err()) {
             return IO<MysqlSessionState>::fail(std::move(sql.error()));
           }
-          auto preview = sql.value().substr(0, 120);
+          if (self->output_.debug().is_enabled()) {
+            self->output_.debug()
+                << "[MonadicMysqlSession][qid=" << qid
+                << "] executing SQL on conn_handle_addr=" << raw_conn_ptr
+                << ": " << sql.value() << std::endl;
+          }
           return self->execute_sql(std::move(state), sql.value());
         });
   }
@@ -161,12 +166,12 @@ class MonadicMysqlSession
           self->pool_.get().get_executor());
       timeout_timer->expires_after(timeout);
       timeout_timer->async_wait(
-          [done_flag, cb,
+          [done_flag, cb, self,
            timeout_timer](const boost::system::error_code& ec) mutable {
             if (done_flag->load()) return;  // already completed
             if (ec) return;                 // cancelled
-            std::cerr << "[instrument][timeout] get_connection exceeded timeout"
-                      << std::endl;
+            BOOST_LOG_SEV(self->lg, trivial::error)
+                << "[MonadicMysqlSession] get_connection exceeded timeout";
             done_flag->store(true);
             MysqlSessionState state;
             state.error = boost::asio::error::timed_out;
@@ -253,21 +258,22 @@ class MonadicMysqlSession
                       << " state_ptr.use_count=" << state_ptr.use_count()
                       << std::endl;
             // Only access results metadata if no error; calling size() on a
-            // disengaged boost::mysql::results asserts (observed in billing test).
+            // disengaged boost::mysql::results asserts (observed in billing
+            // test).
             std::size_t rs_count = 0;
             if (!ec) {
               try {
                 rs_count = state_ptr->results.size();
               } catch (const std::exception& ex) {
-                self->output_.error()
-                    << "[execute_sql] unexpected exception querying results.size(): "
-                    << ex.what();
+                self->output_.error() << "[execute_sql] unexpected exception "
+                                         "querying results.size(): "
+                                      << ex.what();
               }
             } else {
               self->output_.error()
                   << "[execute_sql] completion error ec=" << ec.value()
-                  << " msg=" << ec.message() << " diag="
-                  << state_ptr->diag.server_message();
+                  << " msg=" << ec.message()
+                  << " diag=" << state_ptr->diag.server_message();
             }
             if (state_ptr->conn.valid()) {
               self->pool_.dec_active();
