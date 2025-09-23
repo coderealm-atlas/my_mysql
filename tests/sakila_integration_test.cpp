@@ -91,7 +91,7 @@ TEST_F(SakilaIntegrationTest, test_schema_exists) {
       "('actor', 'film', 'country', 'language')")
       .then([&](auto state) {
         EXPECT_FALSE(state.has_error());
-        auto result = state.expect_one_row("Expected one row with table count", 0, 0);
+        auto result = state.expect_one_row_borrowed("Expected one row with table count", 0, 0);
         EXPECT_TRUE(result.is_ok());
         auto count = result.value().at(0).as_int64();
         EXPECT_EQ(count, 4) << "Should have 4 main Sakila tables";
@@ -121,7 +121,7 @@ TEST_F(SakilaIntegrationTest, test_basic_data_insertion) {
       })
       .then([&, session](auto state) {
         EXPECT_FALSE(state.has_error());
-        auto result = state.expect_one_row("Expected one row with count", 0, 0);
+        auto result = state.expect_one_row_borrowed("Expected one row with count", 0, 0);
         EXPECT_TRUE(result.is_ok());
         auto count = result.value().at(0).as_int64();
         EXPECT_EQ(count, 1) << "Should find the inserted country";

@@ -137,9 +137,10 @@ struct MysqlSessionState {
         monad::Error{db_errors::SQL_EXEC::NO_ROWS, message});
   }
 
-  monad::MyResult<mysql::row_view> expect_one_row(const std::string& message,
-                                                  int result_index,
-                                                  int id_column_index) {
+  // Returns a BORROWED row_view. Must extract values before this state moves or
+  // is destroyed.
+  monad::MyResult<mysql::row_view> expect_one_row_borrowed(
+      const std::string& message, int result_index, int id_column_index) {
     if (has_error()) {
       return monad::MyResult<mysql::row_view>::Err(
           monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
@@ -171,20 +172,85 @@ struct MysqlSessionState {
         results[result_index].rows()[0]);
   }
 
-  monad::MyResult<std::optional<mysql::row_view>> maybe_one_row(
+  monad::MyResult<std::optional<mysql::row_view>> maybe_one_row_borrowed(
       int result_index, int id_column_index) {
-    return expect_one_row("maybe_one_row", result_index, id_column_index)
+    return expect_one_row_borrowed("maybe_one_row_borrowed", result_index,
+                                   id_column_index)
         .and_then([](mysql::row_view row) {
           return monad::MyResult<std::optional<mysql::row_view>>::Ok(
               std::make_optional(row));
         })
         .catch_then([this](monad::Error err) {
+          DEBUG_PRINT("maybe_one_row_borrowed: caught error code "
+                      << err.code << ", message: " << err.what);
           if (err.code == db_errors::SQL_EXEC::NO_ROWS ||
               err.code == db_errors::SQL_EXEC::NULL_ID) {
             return monad::MyResult<std::optional<mysql::row_view>>::Ok(
                 std::nullopt);
           }
           return monad::MyResult<std::optional<mysql::row_view>>::Err(err);
+        });
+  }
+
+  // visit_one_row
+  // --------------------------------------------------------------------
+  // Purpose:
+  //   Safely transform the single required row into a value while the
+  //   underlying buffers (inside this MysqlSessionState) are still alive.
+  //   Prevents accidental storage of a dangling mysql::row_view.
+  // Contract:
+  //   - Executes expect_one_row_borrowed(message, result_index, id_column_index)
+  //   - If that succeeds, invokes F(row_view) exactly once.
+  //   - Returns MyResult<R> where R = invoke_result_t<F,row_view>.
+  // Lifetime / Safety:
+  //   - row_view is BORROWED. Do NOT store it or any field_view beyond the lambda.
+  //   - Extract primitives (int64/string/blob copies) inside F and return them.
+  // Error Propagation:
+  //   - Any error from expect_one_row_borrowed propagates (SQL_FAILED, NO_ROWS, etc.).
+  //   - F itself must be noexcept w.r.t. domain logic (use monadic conversions instead of throwing).
+  // Common Use:
+  //   return state.visit_one_row("wallet missing", 0, 0, [](mysql::row_view rv){
+  //       Wallet w; w.id = rv.at(0).as_int64(); w.user_id = rv.at(1).as_int64(); return w;
+  //   });
+  // Why prefer over expect_one_row_borrowed + map:
+  //   - Centralizes the borrow/consume pattern; reviewers instantly know row_view doesn't escape.
+  //   - Reduces chance of accidentally returning the view or capturing it in outer scope.
+  template <class F>
+  auto visit_one_row(const std::string& message, int result_index,
+                     int id_column_index, F&& f)
+      -> monad::MyResult<std::invoke_result_t<F, mysql::row_view>> {
+    using R = std::invoke_result_t<F, mysql::row_view>;
+    return expect_one_row_borrowed(message, result_index, id_column_index)
+        .map([&](mysql::row_view rv) {
+          return std::invoke(std::forward<F>(f), rv);
+        });
+  }
+
+  // visit_maybe_one_row
+  // --------------------------------------------------------------------
+  // Purpose:
+  //   Like visit_one_row, but tolerant of absence. Produces optional<R>.
+  // Semantics:
+  //   - NO_ROWS or NULL_ID -> Ok(std::nullopt)
+  //   - Other errors propagate.
+  // Lifetime:
+  //   - Same BORROWED constraints; extract inside F.
+  // Example:
+  //   return state.visit_maybe_one_row(0, 0, [](mysql::row_view rv){
+  //       return IdVersion{ rv.at(0).as_int64(), (int)rv.at(1).as_int64() };
+  //   });
+  // Migration Tip:
+  //   Replace maybe_one_row_borrowed(...).map(...) chains with this helper to
+  //   reduce duplicated optional handling logic.
+  template <class F>
+  auto visit_maybe_one_row(int result_index, int id_column_index, F&& f)
+      -> monad::MyResult<
+          std::optional<std::invoke_result_t<F, mysql::row_view>>> {
+    using R = std::invoke_result_t<F, mysql::row_view>;
+    return maybe_one_row_borrowed(result_index, id_column_index)
+        .map([&](std::optional<mysql::row_view> orv) -> std::optional<R> {
+          if (!orv) return std::nullopt;
+          return std::optional<R>(std::invoke(std::forward<F>(f), *orv));
         });
   }
 

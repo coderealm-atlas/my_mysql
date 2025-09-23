@@ -115,7 +115,7 @@ TEST_F(MonadMysqlTest, only_one_row) {
             .then([&](auto state) {
               EXPECT_FALSE(state.has_error());
               auto result =
-                  state.expect_one_row("Expected one row with count", 0, 0);
+                  state.expect_one_row_borrowed("Expected one row with count", 0, 0);
               EXPECT_TRUE(result.is_ok());
               EXPECT_EQ(result.value().at(0).as_int64(), 1);
               return IO<MysqlSessionState>::pure(std::move(state));
@@ -185,7 +185,7 @@ TEST_F(MonadMysqlTest, sql_failed) {
   using namespace monad;
 
   session_->run_query("SELECT x* FROM cjj365_users;").run([&](auto r) {
-    auto rr = r.value().expect_one_row("Expect fail", 0, 0);
+    auto rr = r.value().expect_one_row_borrowed("Expect fail", 0, 0);
     EXPECT_TRUE(rr.is_err());
     EXPECT_EQ(rr.error().code, db_errors::SQL_EXEC::SQL_FAILED);
     this->notifyCompletion();
@@ -194,14 +194,14 @@ TEST_F(MonadMysqlTest, sql_failed) {
   this->waitForCompletion();
 }
 
-TEST_F(MonadMysqlTest, maybe_one_row) {
+TEST_F(MonadMysqlTest, maybe_one_row_borrowed) {
   using namespace monad;
 
   session_->run_query("SELECT * FROM cjj365_users WHERE id = 1")
       .then([&](auto state) {
         // Test case: No rows
         DEBUG_PRINT("[debug] 1");
-        auto result = state.maybe_one_row(0, 0);
+        auto result = state.maybe_one_row_borrowed(0, 0);
         EXPECT_TRUE(result.is_ok());
         EXPECT_FALSE(result.value().has_value());
         return IO<MysqlSessionState>::pure(std::move(state));
@@ -221,7 +221,7 @@ TEST_F(MonadMysqlTest, maybe_one_row) {
       .then([&](auto state) {
         // Test case: One row
         DEBUG_PRINT("[debug] 4");
-        auto result = state.maybe_one_row(0, 0);
+        auto result = state.maybe_one_row_borrowed(0, 0);
         DEBUG_PRINT("[debug] 4.1");
         EXPECT_TRUE(result.is_ok());
         DEBUG_PRINT("[debug] 4.2");
@@ -246,7 +246,7 @@ TEST_F(MonadMysqlTest, maybe_one_row) {
       .then([&](auto state) {
         // Test case: Multiple rows
         DEBUG_PRINT("[debug] 7");
-        auto result = state.maybe_one_row(0, 0);
+        auto result = state.maybe_one_row_borrowed(0, 0);
         EXPECT_TRUE(result.is_err());
         EXPECT_EQ(result.error().code, db_errors::SQL_EXEC::MULTIPLE_RESULTS);
         return IO<MysqlSessionState>::pure(std::move(state));
@@ -260,7 +260,7 @@ TEST_F(MonadMysqlTest, maybe_one_row) {
         DEBUG_PRINT("[debug] 9");
         // Test case: NULL value in specified column
         auto result =
-            state.maybe_one_row(0, 1);  // column 1 is email, which is NULL
+            state.maybe_one_row_borrowed(0, 1);  // column 1 is email, which is NULL
         EXPECT_TRUE(result.is_ok());
         EXPECT_FALSE(result.value().has_value());
         return IO<MysqlSessionState>::pure(std::move(state));

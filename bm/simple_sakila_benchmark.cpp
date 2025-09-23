@@ -98,7 +98,7 @@ BENCHMARK_F(SakilaBenchmark, SimpleSelect)(benchmark::State& state) {
     
     session->run_query("SELECT COUNT(*) FROM film")
         .then([&](auto state) {
-          auto result = state.expect_one_row("Expected film count", 0, 0);
+          auto result = state.expect_one_row_borrowed("Expected film count", 0, 0);
           benchmark::DoNotOptimize(result);
           completed = true;
           return IO<MysqlSessionState>::pure(std::move(state));
