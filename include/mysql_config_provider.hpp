@@ -109,7 +109,8 @@ class MysqlConfigProviderFile : public IMysqlConfigProvider {
       throw std::runtime_error("Failed to load MySQL config.");
     }
     json::value jv = r.value();
-    jsonutil::substitue_envs(jv, app_properties.properties);
+    jsonutil::substitue_envs(jv, config_sources.cli_overrides(),
+                             app_properties.properties);
     config_ = json::value_to<MysqlConfig>(std::move(jv));
   }
 
