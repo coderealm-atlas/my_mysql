@@ -166,13 +166,15 @@ class MonadicMysqlSession
           self->pool_.get().get_executor());
       timeout_timer->expires_after(timeout);
       timeout_timer->async_wait(
-          [done_flag, cb, self,
-           timeout_timer](const boost::system::error_code& ec) mutable {
+          [done_flag, cb, self, timeout_timer,
+           watchdog_timer](const boost::system::error_code& ec) mutable {
             if (done_flag->load()) return;  // already completed
             if (ec) return;                 // cancelled
             BOOST_LOG_SEV(self->lg, trivial::error)
                 << "[MonadicMysqlSession] get_connection exceeded timeout";
             done_flag->store(true);
+            // Cancel watchdog timer to prevent leak
+            watchdog_timer->cancel();
             MysqlSessionState state;
             state.error = boost::asio::error::timed_out;
             cb(IO<MysqlSessionState>::IOResult::Ok(std::move(state)));
@@ -184,9 +186,9 @@ class MonadicMysqlSession
           << std::endl;
 #endif
       self->pool_.get().async_get_connection(
-          [self, cb = std::move(cb), done_flag, timeout_timer](
-              boost::system::error_code ec,
-              mysql::pooled_connection conn) mutable {
+          [self, cb = std::move(cb), done_flag, timeout_timer,
+           watchdog_timer](boost::system::error_code ec,
+                            mysql::pooled_connection conn) mutable {
             if (done_flag->load()) {
               // raced with timeout; release connection immediately if obtained
               if (!ec && conn.valid()) {
@@ -206,6 +208,8 @@ class MonadicMysqlSession
 #endif
             done_flag->store(true);
             timeout_timer->cancel();
+            // Cancel watchdog timer to prevent leak
+            watchdog_timer->cancel();
             MysqlSessionState state;
             if (ec) {
               state.error = ec;
