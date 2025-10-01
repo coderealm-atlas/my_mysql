@@ -140,13 +140,14 @@ class MonadicMysqlSession
       auto watchdog_timer = std::make_shared<asio::steady_timer>(
           self->pool_.get().get_executor());
       auto arm_watchdog = std::make_shared<std::function<void(int)>>();
+      std::weak_ptr<std::function<void(int)>> weak_watchdog = arm_watchdog;
       *arm_watchdog = [watchdog_timer, done_flag, start_tp,
-                       arm_watchdog](int iter) mutable {
+                       weak_watchdog](int iter) mutable {
         if (done_flag->load()) return;
         watchdog_timer->expires_after(std::chrono::seconds(1));
         watchdog_timer->async_wait(
             [watchdog_timer, done_flag, start_tp, iter,
-             arm_watchdog](const boost::system::error_code& ec) mutable {
+             weak_watchdog](const boost::system::error_code& ec) mutable {
               if (done_flag->load() || ec) return;
               auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                                  std::chrono::steady_clock::now() - *start_tp)
@@ -156,7 +157,9 @@ class MonadicMysqlSession
                   << "[instrument][watchdog] async_get_connection pending iter="
                   << iter << " elapsed=" << elapsed << "s" << std::endl;
 #endif
-              (*arm_watchdog)(iter + 1);
+              if (auto locked = weak_watchdog.lock()) {
+                (*locked)(iter + 1);
+              }
             });
       };
       (*arm_watchdog)(1);
