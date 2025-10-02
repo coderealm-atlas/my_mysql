@@ -16,6 +16,7 @@
 #include "tutil.hpp"  // IWYU pragma: keep
 #include "test_injectors.hpp"
 #include "db_resetter.hpp"
+#include "test_openssl_env.hpp"
 
 // (Removed unused namespace alias and header to satisfy linter)
 
@@ -43,7 +44,7 @@ static const auto* const global_env =
 // Test fixture class to reduce duplication
 class MonadMysqlTest : public ::testing::Test {
   using Injector = decltype(test_injectors::build_unit_test_injector());
-  std::unique_ptr<Injector> injector_;
+  std::shared_ptr<Injector> injector_;
 
  protected:
   void SetUp() override {
@@ -51,7 +52,8 @@ class MonadMysqlTest : public ::testing::Test {
     DbResetter resetter;
     ASSERT_EQ(resetter.rc(), 0) << "Failed to reset test database. Command: " << resetter.command();
 
-  injector_ = std::make_unique<Injector>(test_injectors::build_unit_test_injector());
+    // Store injector as shared_ptr to keep it alive
+    injector_ = std::make_shared<Injector>(test_injectors::build_unit_test_injector());
     session_factory_ = injector_->create<monad::MonadicMysqlSession::Factory>();
     session_ = session_factory_();
     io_context_manager_holder = &injector_->create<cjj365::IIoContextManager&>();
@@ -60,6 +62,13 @@ class MonadMysqlTest : public ::testing::Test {
   void TearDown() override {
     // Release session before leak assertion
     session_.reset();
+    
+    // Clear factory to release captures
+    session_factory_ = nullptr;
+    
+    // Release injector
+    injector_.reset();
+    
     // Idle wait loop: give async callbacks a short window to release final shared_ptr refs
     // (observed occasional race under coverage/instrumentation builds)
     for (int i = 0; i < 50 && monad::MonadicMysqlSession::instance_count.load() != 0; ++i) {

@@ -75,16 +75,32 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 message(STATUS "*******GIT_DESCRIBE: ${GIT_DESCRIBE}")
 message(STATUS "*******CMAKE_CURRENT_BINARY_DIR: ${CMAKE_CURRENT_BINARY_DIR}")
 
-# Check if ENABLE_ASAN is ON
-if(ENABLE_ASAN)
-    set(ASAN_FLAGS "-fsanitize=address -fno-omit-frame-pointer -g")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ASAN_FLAGS}")
-    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} ${ASAN_FLAGS}")
-    message(STATUS "AddressSanitizer enabled")
-else()
-    message(STATUS "AddressSanitizer disabled")
-endif()
 
+if(ENABLE_ASAN)
+    if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU"))
+        message(FATAL_ERROR "ENABLE_ASAN requires Clang or GCC toolchains")
+    endif()
+
+    add_compile_options(
+        "$<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address>"
+        "$<$<COMPILE_LANGUAGE:CXX>:-fno-omit-frame-pointer>"
+        "$<$<COMPILE_LANGUAGE:C>:-fsanitize=address>"
+        "$<$<COMPILE_LANGUAGE:C>:-fno-omit-frame-pointer>"
+    )
+
+    add_link_options(-fsanitize=address -fno-omit-frame-pointer)
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(
+            "$<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>"
+            "$<$<COMPILE_LANGUAGE:C>:-fdiagnostics-color=always>"
+        )
+    endif()
+
+    message(STATUS "AddressSanitizer enabled (ENABLE_ASAN=ON)")
+else()
+    message(STATUS "AddressSanitizer disabled (ENABLE_ASAN=OFF)")
+endif()
 
 # CMAKE_BUILD_TYPE STREQUAL "Debug" and no 'NO_ASAN' environment variable
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" AND ENABLE_ASAN)
