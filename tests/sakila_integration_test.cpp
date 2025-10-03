@@ -14,6 +14,7 @@
 #include "tutil.hpp"
 #include "test_injectors.hpp"
 #include "db_resetter.hpp"
+#include "test_openssl_env.hpp"  // IWYU pragma: keep
 
 namespace fs = std::filesystem; // di alias removed (not directly used here)
 

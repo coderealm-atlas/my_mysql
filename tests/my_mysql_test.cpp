@@ -16,7 +16,7 @@
 #include "tutil.hpp"  // IWYU pragma: keep
 #include "test_injectors.hpp"
 #include "db_resetter.hpp"
-#include "test_openssl_env.hpp"
+#include "test_openssl_env.hpp"  // IWYU pragma: keep
 
 // (Removed unused namespace alias and header to satisfy linter)
 
