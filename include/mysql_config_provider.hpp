@@ -112,6 +112,16 @@ class MysqlConfigProviderFile : public IMysqlConfigProvider {
     jsonutil::substitue_envs(jv, config_sources.cli_overrides(),
                              app_properties.properties);
     config_ = json::value_to<MysqlConfig>(std::move(jv));
+    // if any value starts with "${", it means unresolved env var}"
+    if(config_.host.find("${") != std::string::npos ||
+       config_.username.find("${") != std::string::npos ||
+       config_.password.find("${") != std::string::npos ||
+       config_.database.find("${") != std::string::npos) {
+      output_.error() << "MySQL config contains unresolved environment "
+                         "variables.";
+      throw std::runtime_error(
+          "MySQL config contains unresolved environment variables.");
+    }
   }
 
   const MysqlConfig& get() const override { return config_; }
