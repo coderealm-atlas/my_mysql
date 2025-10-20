@@ -15,6 +15,7 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(date CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
 
 # Boost components
 find_package(Boost REQUIRED COMPONENTS 
@@ -70,6 +71,7 @@ target_link_libraries(
         ZLIB::ZLIB
         Boost::log
         Boost::log_setup
+        fmt::fmt-header-only
     )
 add_test(
     NAME ${T_NAME}
@@ -110,6 +112,7 @@ target_link_libraries(
         ZLIB::ZLIB
         Boost::log
         Boost::log_setup
+        fmt::fmt-header-only
     )
 add_test(
     NAME ${SAKILA_T_NAME}
