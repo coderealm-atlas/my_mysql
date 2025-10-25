@@ -518,11 +518,11 @@ struct MysqlPoolWrapper {
   const mysql::connection_pool& get() const { return pool_; }
   void inc_active() {
     auto v = active_conns_.fetch_add(1) + 1;
-    std::cerr << "[instrument][active_conns] + now=" << v << std::endl;
+    // std::cerr << "[instrument][active_conns] + now=" << v << std::endl;
   }
   void dec_active() {
     auto v = active_conns_.fetch_sub(1) - 1;
-    std::cerr << "[instrument][active_conns] - now=" << v << std::endl;
+    // std::cerr << "[instrument][active_conns] - now=" << v << std::endl;
   }
   int active() const { return active_conns_.load(); }
 
