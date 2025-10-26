@@ -20,12 +20,14 @@
 #include <cstdint>
 #include <numbers>
 
+#include "openssl_thread_cleanup.hpp"
+
 #include "base64.h"
 #include "common_macros.hpp"
 #include "db_errors.hpp"
-#include "io_context_manager.hpp"
 #include "mysql_config_provider.hpp"
 #include "result_monad.hpp"
+#include "mysql_io_context.hpp"
 
 namespace ssl = boost::asio::ssl;  // from <boost/asio/ssl.hpp>
 namespace asio = boost::asio;
@@ -433,11 +435,13 @@ inline mysql::pool_params params(const MysqlConfig& config) {
           ssl::context::file_format::pem);
       params.ssl_ctx = std::move(client_ssl_ctx);
     } else {
+      params.ssl = mysql::ssl_mode::disable;
     }
     params.username = config.username;
     params.password = config.password;
   } else {
     params.server_address.emplace_unix_path(config.unix_socket);
+    params.ssl = mysql::ssl_mode::disable;
     params.username = config.username_socket;
     params.password = config.password_socket;
   }
@@ -462,7 +466,7 @@ inline mysql::pool_params params(const MysqlConfig& config) {
 }
 
 struct MysqlPoolWrapper {
-  MysqlPoolWrapper(cjj365::IIoContextManager& ioc_manager,
+  MysqlPoolWrapper(cjj365::MysqlIoContextManager& ioc_manager,
                    IMysqlConfigProvider& mysql_config_provider)
       : pool_(ioc_manager.ioc(), params(mysql_config_provider.get())) {
     active_conns_.store(0);
@@ -502,6 +506,7 @@ struct MysqlPoolWrapper {
 
   ~MysqlPoolWrapper() {
     stop();
+    cjj365::OpenSslThreadCleanup cleanup_guard;
     DEBUG_PRINT("[MysqlPoolWrapper] Destructor called.");
   }
 
