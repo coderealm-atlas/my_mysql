@@ -213,8 +213,10 @@ add_definitions(-DBOOST_PROCESS_VERSION=2)
 
 file(GLOB LIB_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_compile_definitions(BUFFERSIZE=2048)
+add_compile_definitions(RYML_DEFAULT_CALLBACK_USES_EXCEPTIONS=1)
 
 find_package(OpenSSL REQUIRED)
+find_package(ryml CONFIG REQUIRED)
 add_subdirectory(tests)
 add_subdirectory(bm)
 

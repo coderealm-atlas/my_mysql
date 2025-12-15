@@ -21,6 +21,10 @@
         "ssl"
       ]
     },
+    {
+      "name": "ryml",
+      "version>=": "0.10.0"
+    },
     "zstd"
   ]
 }

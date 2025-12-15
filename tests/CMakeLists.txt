@@ -72,6 +72,7 @@ target_link_libraries(
         Boost::log
         Boost::log_setup
         fmt::fmt-header-only
+        ryml::ryml
     )
 add_test(
     NAME ${T_NAME}
