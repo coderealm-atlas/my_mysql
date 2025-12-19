@@ -183,13 +183,13 @@ struct MysqlSessionState {
               std::make_optional(row));
         })
         .catch_then([this](monad::Error err) {
-          DEBUG_PRINT("maybe_one_row_borrowed: caught error code "
-                      << err.code << ", message: " << err.what);
           if (err.code == db_errors::SQL_EXEC::NO_ROWS ||
               err.code == db_errors::SQL_EXEC::NULL_ID) {
             return monad::MyResult<std::optional<mysql::row_view>>::Ok(
                 std::nullopt);
           }
+          DEBUG_PRINT("maybe_one_row_borrowed: caught error code "
+                      << err.code << ", message: " << err.what);
           return monad::MyResult<std::optional<mysql::row_view>>::Err(err);
         });
   }
