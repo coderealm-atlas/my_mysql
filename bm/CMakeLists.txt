@@ -47,4 +47,6 @@ target_link_libraries(sakila_benchmark
     PRIVATE ZLIB::ZLIB
     PRIVATE Boost::log
     PRIVATE Boost::log_setup
+    PRIVATE fmt::fmt-header-only
+    PRIVATE ryml::ryml
 )

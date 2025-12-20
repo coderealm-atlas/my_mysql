@@ -79,6 +79,7 @@ add_test(
     COMMAND ${T_NAME}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# ----------------------------sakila_integration_test------------------------------
 # Sakila Integration Tests
 set(SAKILA_T_NAME sakila_integration_test)
 
@@ -114,6 +115,7 @@ target_link_libraries(
         Boost::log
         Boost::log_setup
         fmt::fmt-header-only
+        ryml::ryml
     )
 add_test(
     NAME ${SAKILA_T_NAME}

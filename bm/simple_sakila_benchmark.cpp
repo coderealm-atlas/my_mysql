@@ -16,6 +16,7 @@
 #include "mysql_monad.hpp"
 #include "simple_data.hpp"
 #include "tutil.hpp"
+#include "test_openssl_env.hpp"
 
 using namespace monad;
 namespace di = boost::di;
@@ -31,6 +32,8 @@ static customio::ConsoleOutputWithColor& output() {
   static customio::ConsoleOutputWithColor instance(4);
   return instance;
 }
+
+[[maybe_unused]] const testinfra::OpenSslTestGlobalState kOpenSslEnv{}; 
 
 class SakilaBenchmark : public benchmark::Fixture {
 protected:
