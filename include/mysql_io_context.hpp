@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <iostream>
+#include <memory>
 
 #include "openssl_thread_cleanup.hpp"
 
@@ -13,15 +14,16 @@ namespace cjj365 {
 class MysqlIoContextManager {
 public:
     MysqlIoContextManager()
-        : ioc_(1),  // 1 = concurrency hint
-          work_guard_(boost::asio::make_work_guard(ioc_)),
+        : state_(std::make_shared<State>()),
           stopped_(false)
     {
         // Launch exactly one thread that just runs this io_context forever
-        thread_ = std::thread([this] {
+        // Thread captures owning state so that even if stop() is invoked from
+        // within this thread (and we must detach), we won't UAF `this`.
+        thread_ = std::thread([state = state_] {
             OpenSslThreadCleanup openssl_guard;
             try {
-                auto count = ioc_.run();
+                auto count = state->ioc.run();
                 std::cerr << "[MysqlIoContextManager] io_context stopped, run() count="
                           << count << "\n";
             } catch (const std::exception& e) {
@@ -33,14 +35,14 @@ public:
         std::cerr << "[MysqlIoContextManager] started dedicated Redis IO thread\n";
     }
 
-    boost::asio::io_context& ioc() { return ioc_; }
+    boost::asio::io_context& ioc() { return state_->ioc; }
 
     void stop() {
         if (stopped_.exchange(true)) {
             return;
         }
-        work_guard_.reset(); // allow io_context.run() to exit when no work
-        ioc_.stop();
+        state_->work_guard.reset(); // allow io_context.run() to exit when no work
+        state_->ioc.stop();
 
         if (thread_.joinable()) {
             // If stop() is called from the same thread, avoid self-join deadlock
@@ -58,8 +60,20 @@ public:
     }
 
 private:
-    boost::asio::io_context ioc_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard_;
+    struct State {
+        State()
+            : ioc(1),
+              work_guard(std::make_unique<boost::asio::executor_work_guard<
+                             boost::asio::io_context::executor_type>>(
+                  boost::asio::make_work_guard(ioc))) {}
+
+        boost::asio::io_context ioc;
+        std::unique_ptr<
+            boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>
+            work_guard;
+    };
+
+    std::shared_ptr<State> state_;
     std::thread thread_;
     std::atomic<bool> stopped_;
 };
