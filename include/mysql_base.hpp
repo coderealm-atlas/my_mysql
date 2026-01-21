@@ -109,13 +109,49 @@ struct MysqlSessionState {
   }
 
   bool has_error() const { return static_cast<bool>(error); }
-  std::string error_message() const { return error.message(); }
+  std::string error_message() const {
+    // boost::mysql::error_code::message() for server errors often returns a
+    // generic symbolic string like "er_bad_field_error".
+    // diagnostics().server_message() carries the detailed server text like
+    // "Unknown column 'x' in 'field list'".
+    // Combine them so callers that only propagate error_message() still get a
+    // specific, actionable error without including SQL text.
+    auto generic = error.message();
+    auto diag_msg = diag.server_message();
+    if (diag_msg.empty()) {
+      return generic;
+    }
+    if (generic.empty() || generic == diag_msg) {
+      return diag_msg;
+    }
+    return std::string(generic) + ": " + std::string(diag_msg);
+  }
   std::string diagnostics() const { return diag.server_message(); }
+
+  monad::Error sql_failed_error() const {
+    monad::Error err{};
+    err.code = db_errors::SQL_EXEC::SQL_FAILED;
+    err.what = error_message();
+    if (has_error()) {
+      // Include safe MySQL metadata (no SQL text).
+      err.params["mysql_errno"] = static_cast<int64_t>(error.value());
+      err.params["mysql_category"] = error.category().name();
+      auto generic = error.message();
+      if (!generic.empty()) {
+        err.params["mysql_error"] = std::move(generic);
+      }
+      auto diag_msg = diag.server_message();
+      if (!diag_msg.empty()) {
+        err.params["mysql_diag"] = std::move(diag_msg);
+      }
+    }
+    return err;
+  }
 
   monad::MyVoidResult expect_no_error(const std::string& message) {
     if (has_error()) {
       return monad::MyVoidResult::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     return monad::MyVoidResult();
   }
@@ -124,7 +160,7 @@ struct MysqlSessionState {
       const std::string& message, int cols) {
     if (has_error()) {
       return monad::MyResult<mysql::row_view>::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     // Iterate resultsets; return the first row whose column count is > cols.
     for (const auto& rs : results) {
@@ -145,7 +181,7 @@ struct MysqlSessionState {
       const std::string& message, int result_index, int id_column_index) {
     if (has_error()) {
       return monad::MyResult<mysql::row_view>::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     if (results.size() <= result_index) {
       return monad::MyResult<mysql::row_view>::Err(
@@ -260,7 +296,7 @@ struct MysqlSessionState {
                                               int result_index) {
     if (has_error()) {
       return monad::MyVoidResult::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     if (results.size() <= result_index) {
       return monad::MyVoidResult::Err(
@@ -277,7 +313,7 @@ struct MysqlSessionState {
                                                  int result_index) {
     if (has_error()) {
       return monad::MyResult<uint64_t>::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     if (results.size() <= result_index) {
       return monad::MyResult<uint64_t>::Err(
@@ -292,7 +328,7 @@ struct MysqlSessionState {
     using RtypeIO = monad::MyResult<std::pair<mysql::resultset_view, int64_t>>;
     if (has_error()) {
       return RtypeIO::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     if (results.size() <= rows_result_index ||
         results.size() <= total_result_index) {
@@ -330,7 +366,7 @@ struct MysqlSessionState {
     using monad::MyResult;
     if (has_error()) {
       return MyResult<T>::Err(
-          monad::Error{db_errors::SQL_EXEC::SQL_FAILED, diagnostics()});
+          sql_failed_error());
     }
     if (results.size() <= result_index) {
       return MyResult<T>::Err(
