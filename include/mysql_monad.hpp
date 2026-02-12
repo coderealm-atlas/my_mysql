@@ -221,7 +221,30 @@ class MonadicMysqlSession
                   MysqlSessionState::TrackedPooledConn(std::move(conn));
               self->pool_.inc_active();
             }
-            cb(IO<MysqlSessionState>::IOResult::Ok(std::move(state)));
+            if (state.has_error() || !state.conn.valid()) {
+              cb(IO<MysqlSessionState>::IOResult::Ok(std::move(state)));
+              return;
+            }
+
+            // Ensure all session-level time computations (NOW(), CURRENT_TIMESTAMP,
+            // date casts, etc.) behave as UTC. This avoids implicit dependence on
+            // MySQL server/session timezone.
+            auto tz_results = std::make_shared<mysql::results>();
+            auto tz_diag = std::make_shared<mysql::diagnostics>();
+            state.conn.get()->async_execute(
+                "SET time_zone = '+00:00'", *tz_results, *tz_diag,
+                [self, cb = std::move(cb), state = std::move(state), tz_results,
+                 tz_diag](mysql::error_code tz_ec) mutable {
+                  if (tz_ec) {
+                    state.error = tz_ec;
+                    state.diag = *tz_diag;
+                    // get_connection() increments active; release on error.
+                    if (state.conn.valid()) {
+                      self->pool_.dec_active();
+                    }
+                  }
+                  cb(IO<MysqlSessionState>::IOResult::Ok(std::move(state)));
+                });
           });
     });
   }
