@@ -117,6 +117,16 @@ struct MysqlSessionState {
     // Combine them so callers that only propagate error_message() still get a
     // specific, actionable error without including SQL text.
     auto generic = error.message();
+    // The connection pool timeout is currently represented as
+    // boost::asio::error::timed_out, whose message is the ambiguous
+    // "Connection timed out". Make it explicit for operators.
+    if (error == boost::asio::error::timed_out) {
+      if (generic.empty()) {
+        return "MySQL timeout acquiring pooled connection";
+      }
+      return std::string("MySQL timeout acquiring pooled connection: ") +
+             std::string(generic);
+    }
     auto diag_msg = diag.server_message();
     if (diag_msg.empty()) {
       return generic;
