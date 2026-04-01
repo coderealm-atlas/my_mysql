@@ -42,7 +42,9 @@ inline auto build_base_injector() {
       di::bind<cjj365::IIoContextManager>().to<cjj365::IoContextManager>(),
       di::bind<sql::IMysqlConfigProvider>().to<sql::MysqlConfigProviderFile>().in(di::singleton),
       di::bind<sql::MysqlPoolWrapper>().in(di::singleton),
-      di_utils::safe_factory_binding<monad::MonadicMysqlSession, sql::MysqlPoolWrapper, customio::IOutput>(),
+      di_utils::safe_factory_binding_with_shared_owner<
+          monad::MonadicMysqlSession, sql::MysqlPoolWrapper,
+          customio::IOutput>(),
       di::bind<cjj365::IIocConfigProvider>().to<cjj365::IocConfigProviderFile>()
   );
 }
